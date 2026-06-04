@@ -10,9 +10,31 @@ import os
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 
-from resolver import answer_question
+from resolver import answer_question, classify_intent
 
 app = App(token=os.environ["SLACK_BOT_TOKEN"])
+
+# Google Sheets export is optional: ON only if SHEETS_ENABLED=true AND a Google
+# OAuth token exists (see bot/google_auth.py). Until then the bot replies with
+# the inline table only — no Google dependency needed to run.
+SHEETS_ENABLED = os.environ.get("SHEETS_ENABLED", "false").lower() == "true"
+
+# The bot's own user id, so the generic message handler can skip @mentions
+# (handled by app_mention) and avoid answering twice.
+try:
+    BOT_USER_ID = app.client.auth_test().get("user_id")
+except Exception:
+    BOT_USER_ID = None
+
+
+def _sheets_ready() -> bool:
+    if not SHEETS_ENABLED:
+        return False
+    try:
+        import google_auth
+        return google_auth.is_ready()
+    except Exception:
+        return False
 
 
 def _is_measure(name: str) -> bool:
@@ -76,20 +98,80 @@ def format_reply(question: str, out: dict) -> str:
     return f"{body}\n\n_resolved via semantic layer:_ `{spec}`"
 
 
+def export_to_sheet(thread_ts: str, question: str, rows: list) -> str:
+    """Create or modify the thread's Google Sheet based on the user's intent.
+    Returns a one-line Slack status with the link."""
+    import sheets
+    import thread_store
+
+    state = thread_store.get(thread_ts)
+    if not state:
+        # First question in this thread → new spreadsheet.
+        sid, url, tab = sheets.create_spreadsheet(question, question, rows)
+        thread_store.put(thread_ts, sid, tab, question)
+        return f":bar_chart: <{url}|Open in Google Sheets> · tab *{tab}*"
+
+    sid = state["spreadsheet_id"]
+    url = sheets.url_for(sid)
+    action = classify_intent(state["last_question"], question)
+
+    if action == "new_sheet":
+        sid, url, tab = sheets.create_spreadsheet(question, question, rows)
+        thread_store.put(thread_ts, sid, tab, question)
+        return f":bar_chart: New sheet → <{url}|open> · tab *{tab}*"
+    if action == "refine":
+        tab = sheets.replace_tab(sid, state["last_tab"], rows)
+        thread_store.put(thread_ts, sid, tab, question)
+        return f":pencil2: Updated tab *{tab}* → <{url}|open>"
+    # default: a different question → new tab in the same spreadsheet
+    tab = sheets.add_tab(sid, question, rows)
+    thread_store.put(thread_ts, sid, tab, question)
+    return f":heavy_plus_sign: Added tab *{tab}* → <{url}|open>"
+
+
+def handle_question(question: str, thread_ts: str) -> str:
+    out = answer_question(question)
+    reply = format_reply(question, out)
+    if _sheets_ready() and out.get("rows"):
+        try:
+            reply += "\n\n" + export_to_sheet(thread_ts, question, out["rows"])
+        except Exception as e:  # never let a Sheets hiccup break the answer
+            reply += f"\n\n_(Google Sheet export skipped: {e})_"
+    return reply
+
+
 @app.event("app_mention")
 def on_mention(event, say):
     text = event.get("text", "")
     # strip the leading <@BOTID> mention
     question = text.split(">", 1)[-1].strip() if ">" in text else text
-    say(text=format_reply(question, answer_question(question)),
-        thread_ts=event.get("ts"))
+    thread_ts = event.get("thread_ts") or event.get("ts")
+    say(text=handle_question(question, thread_ts), thread_ts=thread_ts)
 
 
 @app.event("message")
-def on_dm(event, say):
-    if event.get("channel_type") == "im" and not event.get("bot_id"):
-        q = event.get("text", "")
-        say(text=format_reply(q, answer_question(q)))
+def on_message(event, say):
+    # ignore the bot's own messages, edits, joins, etc.
+    if event.get("bot_id") or event.get("subtype"):
+        return
+    text = event.get("text", "") or ""
+    # if the message @mentions the bot, let on_mention handle it (avoid double reply)
+    if BOT_USER_ID and f"<@{BOT_USER_ID}>" in text:
+        return
+
+    if event.get("channel_type") == "im":
+        # DM: thread by the message itself
+        thread_ts = event.get("thread_ts") or event.get("ts")
+        say(text=handle_question(text, thread_ts))
+        return
+
+    # Mention-free follow-up inside a channel thread the bot already owns.
+    # (Requires the `message.channels` scope/event to be subscribed in Slack.)
+    thread_ts = event.get("thread_ts")
+    if thread_ts:
+        import thread_store
+        if thread_store.get(thread_ts):
+            say(text=handle_question(text, thread_ts), thread_ts=thread_ts)
 
 
 if __name__ == "__main__":

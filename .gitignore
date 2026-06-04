@@ -22,3 +22,8 @@ airflow/plugins/
 
 # dbt local user id
 dbt/.user.yml
+
+# Google Sheets feature — secrets & local state, NEVER commit
+bot/credentials.json
+bot/token.json
+bot/bot_state.db

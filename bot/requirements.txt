@@ -1,3 +1,8 @@
 anthropic>=0.40
 slack-bolt>=1.18
 requests>=2.31
+
+# Google Sheets export (optional feature; safe to install even if unused)
+google-api-python-client>=2.100
+google-auth>=2.23
+google-auth-oauthlib>=1.1

@@ -133,6 +133,30 @@ def question_to_query(question: str, catalog: str) -> dict:
     return _resolve_with_gemini(system, question)
 
 
+INTENT_SYSTEM = """You classify how a follow-up analytics request relates to the
+PREVIOUS request in the same chat thread. Output ONLY JSON: {"action": "<value>"}.
+Allowed values:
+- "refine": same question, changed slightly (different units, sorting, a filter,
+  a different time window) -> the previous result should be OVERWRITTEN.
+- "new_tab": a DIFFERENT question or breakdown -> add it ALONGSIDE the previous one.
+- "new_sheet": the user explicitly asks for a NEW / SEPARATE spreadsheet or file.
+When unsure, choose "new_tab"."""
+
+
+def classify_intent(prev_question: str, new_question: str) -> str:
+    """Return 'refine' | 'new_tab' | 'new_sheet' for a thread follow-up."""
+    user = f'Previous request: "{prev_question}"\nNew request: "{new_question}"'
+    try:
+        if LLM_PROVIDER == "anthropic":
+            out = _resolve_with_anthropic(INTENT_SYSTEM, user)
+        else:
+            out = _resolve_with_gemini(INTENT_SYSTEM, user)
+        action = str(out.get("action", "new_tab")).strip().lower()
+        return action if action in ("refine", "new_tab", "new_sheet") else "new_tab"
+    except Exception:
+        return "new_tab"
+
+
 def run_query(cube_query: dict) -> dict:
     """POST the spec to Cube. Cube may answer 'Continue wait' while building — poll."""
     for _ in range(10):
