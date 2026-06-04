@@ -1,0 +1,85 @@
+cubes:
+  - name: payments
+    sql_table: gold.fct_payments
+    title: "Payments"
+    description: "Card and non-card payment transactions. One row per payment attempt."
+
+    # ---- JOINS: how this cube connects to the dimension cubes ----
+    joins:
+      - name: cards
+        sql: "{CUBE}.card_id = {cards}.id"
+        relationship: many_to_one
+      - name: merchants
+        sql: "{CUBE}.merchant_id = {merchants}.id"
+        relationship: many_to_one
+      - name: customers
+        sql: "{CUBE}.customer_id = {customers}.id"
+        relationship: many_to_one
+
+    # ---- MEASURES: the numbers stakeholders ask for ----
+    measures:
+      - name: count
+        type: count
+        title: "Number of payments"
+        description: "Total count of payment transactions. Synonyms: transactions, payments, number of payments, how many payments."
+
+      - name: succeeded_count
+        type: count
+        title: "Successful payments"
+        description: "Count of payments that completed successfully. Synonyms: successful, approved, completed payments."
+        filters:
+          - sql: "{CUBE}.status = 'succeeded'"
+
+      - name: failed_count
+        type: count
+        title: "Failed payments"
+        description: "Count of payments that failed. Synonyms: declined, rejected, failed payments."
+        filters:
+          - sql: "{CUBE}.status = 'failed'"
+
+      - name: total_amount
+        type: sum
+        sql: "{CUBE}.amount_cents / 100.0"
+        title: "Total amount"
+        description: "Sum of payment amounts in major currency units. Synonyms: revenue, total value, payment volume, gross amount."
+        format: currency
+
+      - name: avg_amount
+        type: avg
+        sql: "{CUBE}.amount_cents / 100.0"
+        title: "Average payment amount"
+        description: "Average payment size in major currency units. Synonyms: average transaction value, mean payment."
+        format: currency
+
+      - name: success_rate
+        type: number
+        sql: "100.0 * {succeeded_count} / NULLIF({count}, 0)"
+        title: "Success rate (%)"
+        description: "Percentage of payments that succeeded. Synonyms: approval rate, acceptance rate."
+
+    # ---- DIMENSIONS: how stakeholders slice those numbers ----
+    dimensions:
+      - name: id
+        sql: id
+        type: number
+        primary_key: true
+
+      - name: status
+        sql: status
+        type: string
+        description: "Payment outcome: succeeded, failed, refunded, or pending."
+
+      - name: payment_method
+        sql: payment_method
+        type: string
+        description: "How the payment was made: card, sepa, paypal, apple_pay."
+
+      - name: currency
+        sql: currency
+        type: string
+        description: "ISO currency code: EUR, USD, GBP."
+
+      - name: created_at
+        sql: created_at
+        type: time
+        description: "When the payment happened. Use for any time filter (today, last month, this week, last 7 days)."

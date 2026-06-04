@@ -1,0 +1,31 @@
+cubes:
+  - name: customers
+    sql_table: gold.dim_customers
+    title: "Customers"
+    description: "People and businesses that make payments."
+
+    measures:
+      - name: count
+        type: count
+        title: "Number of customers"
+
+    dimensions:
+      - name: id
+        sql: id
+        type: number
+        primary_key: true
+
+      - name: country
+        sql: country
+        type: string
+        description: "Customer country (ISO code): DE, FR, ES, NL, IT, GB."
+
+      - name: segment
+        sql: segment
+        type: string
+        description: "Customer segment: consumer, sme, enterprise. Synonyms: customer type, tier."
+
+      - name: created_at
+        sql: created_at
+        type: time
+        description: "When the customer signed up."

@@ -1,0 +1,119 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: demo
+    ports:
+      # Host 5432 is taken by a local Postgres on this Mac, so expose the
+      # container on 55432 instead. Inside the Docker network it's still db:5432
+      # (Cube, Airflow/Cosmos use that); only host tools (dbt) use 55432.
+      - "55432:5432"
+    volumes:
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d demo"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  cube:
+    image: cubejs/cube:latest
+    ports:
+      - "4000:4000"   # Developer Playground + REST API
+      - "15432:15432" # SQL API (optional, for Superset/Metabase later)
+    environment:
+      CUBEJS_DEV_MODE: "true"            # disables auth, enables Playground at :4000
+      CUBEJS_DB_TYPE: postgres
+      CUBEJS_DB_HOST: db
+      CUBEJS_DB_PORT: "5432"
+      CUBEJS_DB_NAME: demo
+      CUBEJS_DB_USER: postgres
+      CUBEJS_DB_PASS: postgres
+      CUBEJS_API_SECRET: devsecret
+    volumes:
+      - ./model:/cube/conf/model       # <-- THIS folder IS your semantic layer
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # ── ORCHESTRATION: Airflow + Cosmos run the dbt Medallion pipeline ──────────
+  # Airflow's own metadata DB (kept separate from the analytics `db`).
+  airflow-meta:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - airflow-meta-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  airflow-init:
+    build: ./airflow
+    image: fintech-airflow:latest
+    depends_on:
+      airflow-meta:
+        condition: service_healthy
+    environment: &airflow-env
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-meta/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+      AIRFLOW__WEBSERVER__SECRET_KEY: demo-secret-key
+      AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
+      # dbt (inside the container) talks to the analytics Postgres over the
+      # Docker network as db:5432 — NOT the host's 55432.
+      DBT_HOST: db
+      DBT_PORT: "5432"
+      DBT_PROFILES_DIR: /opt/airflow/dbt
+    user: "${AIRFLOW_UID:-50000}:0"
+    volumes: &airflow-volumes
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./dbt:/opt/airflow/dbt
+    # Keep the image's DEFAULT entrypoint — it registers a passwd entry for the
+    # arbitrary host UID (501), which the `airflow` CLI's getuser() requires.
+    # The entrypoint treats a leading `bash` specially, so our steps still run.
+    command:
+      - bash
+      - -c
+      - |
+        airflow db migrate
+        airflow users create --role Admin --username admin --password admin \
+          --firstname admin --lastname user --email admin@example.com || true
+
+  airflow-scheduler:
+    build: ./airflow
+    image: fintech-airflow:latest
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    environment: *airflow-env
+    user: "${AIRFLOW_UID:-50000}:0"
+    volumes: *airflow-volumes
+    command: scheduler
+    restart: unless-stopped
+
+  airflow-webserver:
+    build: ./airflow
+    image: fintech-airflow:latest
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    environment: *airflow-env
+    user: "${AIRFLOW_UID:-50000}:0"
+    volumes: *airflow-volumes
+    ports:
+      - "8088:8080"     # Airflow UI on http://localhost:8088 — login admin / admin
+                        # (host 8080 was already taken on this Mac)
+    command: webserver
+    restart: unless-stopped
+
+volumes:
+  airflow-meta-data:

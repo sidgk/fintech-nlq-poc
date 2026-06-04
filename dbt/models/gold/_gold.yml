@@ -1,0 +1,46 @@
+version: 2
+
+# These tests are the "trust contract" for the gold layer. They run as part of
+# `dbt build` / the Airflow DAG. If dedup or normalization ever regresses, the
+# pipeline goes red BEFORE bad numbers reach Cube and the resolver.
+models:
+  - name: fct_payments
+    description: "GOLD fact — one row per payment (the star-schema centre)."
+    columns:
+      - name: id
+        description: "Payment id. Unique proves silver dedup worked."
+        tests:
+          - not_null
+          - unique
+      - name: status
+        description: "Normalized outcome. accepted_values proves silver cleaned the messy raw values."
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['succeeded', 'failed', 'refunded', 'pending']
+      - name: amount
+        tests:
+          - not_null
+      - name: merchant_id
+        tests:
+          - relationships:
+              to: ref('dim_merchants')
+              field: id
+
+  - name: dim_merchants
+    description: "GOLD merchant dimension."
+    columns:
+      - name: id
+        tests: [not_null, unique]
+
+  - name: dim_cards
+    description: "GOLD card dimension."
+    columns:
+      - name: id
+        tests: [not_null, unique]
+
+  - name: dim_customers
+    description: "GOLD customer dimension."
+    columns:
+      - name: id
+        tests: [not_null, unique]

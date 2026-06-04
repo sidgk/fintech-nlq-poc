@@ -1,0 +1,15 @@
+version: 2
+
+# BRONZE — the raw landing zone. dbt does not build these; they are "ingested
+# by data engineering" (here: db/init.sql). We declare them as sources so the
+# whole lineage (raw -> silver -> gold) is tracked and visible in dbt docs.
+sources:
+  - name: raw
+    schema: raw
+    description: "Bronze layer: raw landing tables, as ingested. Permissive & messy."
+    tables:
+      - name: customers
+      - name: merchants
+      - name: cards
+      - name: payments
+        description: "Raw payment events — may contain duplicate ids and text timestamps."

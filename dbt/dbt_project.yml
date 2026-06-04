@@ -1,0 +1,21 @@
+name: 'fintech'
+version: '1.0.0'
+config-version: 2
+profile: 'fintech'
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+# Medallion materialization strategy:
+#   silver = views  (cheap, always-fresh staging)
+#   gold   = tables (fast reads for Cube / the resolver)
+models:
+  fintech:
+    silver:
+      +schema: silver
+      +materialized: view
+    gold:
+      +schema: gold
+      +materialized: table

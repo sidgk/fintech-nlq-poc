@@ -1,0 +1,24 @@
+# secrets — NEVER commit
+.env
+*.service-account.json
+*-credentials.json
+
+# python
+venv/
+__pycache__/
+*.pyc
+
+# dbt build artifacts
+dbt/target/
+dbt/logs/
+dbt/dbt_packages/
+
+# airflow runtime
+airflow/logs/
+airflow/plugins/
+
+# os
+.DS_Store
+
+# dbt local user id
+dbt/.user.yml

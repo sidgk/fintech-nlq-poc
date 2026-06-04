@@ -1,0 +1,36 @@
+views:
+  - name: payments_overview
+    title: "Payments overview"
+    description: "One flat surface for all payment questions: payment measures sliced by card, merchant, and customer attributes. Prefer this view for natural-language questions."
+
+    cubes:
+      - join_path: payments
+        includes:
+          - count
+          - succeeded_count
+          - failed_count
+          - total_amount
+          - avg_amount
+          - success_rate
+          - status
+          - payment_method
+          - currency
+          - created_at
+
+      - join_path: payments.cards
+        prefix: true
+        includes:
+          - brand
+          - card_type
+
+      - join_path: payments.merchants
+        prefix: true
+        includes:
+          - category
+          - country
+
+      - join_path: payments.customers
+        prefix: true
+        includes:
+          - country
+          - segment

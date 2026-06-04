@@ -1,0 +1,30 @@
+cubes:
+  - name: merchants
+    sql_table: gold.dim_merchants
+    title: "Merchants"
+    description: "Businesses that accept payments."
+
+    measures:
+      - name: count
+        type: count
+        title: "Number of merchants"
+
+    dimensions:
+      - name: id
+        sql: id
+        type: number
+        primary_key: true
+
+      - name: name
+        sql: name
+        type: string
+
+      - name: category
+        sql: category
+        type: string
+        description: "Merchant sector: grocery, travel, electronics, dining, subscription, fuel, healthcare. Synonyms: merchant category, sector, industry, vertical."
+
+      - name: country
+        sql: country
+        type: string
+        description: "Merchant country (ISO code)."

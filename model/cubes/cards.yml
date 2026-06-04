@@ -1,0 +1,31 @@
+cubes:
+  - name: cards
+    sql_table: gold.dim_cards
+    title: "Cards"
+    description: "Payment cards belonging to customers."
+
+    measures:
+      - name: count
+        type: count
+        title: "Number of cards"
+
+    dimensions:
+      - name: id
+        sql: id
+        type: number
+        primary_key: true
+
+      - name: brand
+        sql: brand
+        type: string
+        description: "Card network: visa, mastercard, amex. Synonyms: card brand, network, scheme."
+
+      - name: card_type
+        sql: card_type
+        type: string
+        description: "credit or debit. Synonyms: card type."
+
+      - name: issued_at
+        sql: issued_at
+        type: time
+        description: "When the card was issued."
