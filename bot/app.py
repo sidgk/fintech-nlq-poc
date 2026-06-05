@@ -147,8 +147,34 @@ def export_to_sheet(thread_ts: str, question: str, rows: list) -> str:
     return f"{prefix} {verb}"
 
 
+# Remember the last query spec per thread so "how was this calculated?" can
+# explain the metric the stakeholder is looking at.
+_LAST_QUERY = {}
+
+
+def _wants_lineage(text: str) -> bool:
+    t = text.lower()
+    return any(p in t for p in (
+        "how was this calculated", "how was it calculated", "how is this calculated",
+        "how did you calculate", "how did you get this", "how did you arrive",
+        "lineage", "where does this come from", "where did this come from",
+        "show me the source", "show the source", "how was this derived",
+        "calculation flow", "how this metric", "trace this",
+    ))
+
+
 def handle_question(question: str, thread_ts: str) -> str:
+    # Lineage question about the thread's last metric — explain, don't re-query.
+    if _wants_lineage(question) and _LAST_QUERY.get(thread_ts):
+        try:
+            import lineage
+            return lineage.explain(_LAST_QUERY[thread_ts])
+        except Exception as e:
+            return f":warning: couldn't build the lineage: {e}"
+
     out = answer_question(question)
+    if out.get("query"):
+        _LAST_QUERY[thread_ts] = out["query"]     # remember for a follow-up lineage ask
     reply = format_reply(question, out)
     if _sheets_ready() and out.get("rows"):
         try:
