@@ -68,12 +68,15 @@ Rules:
   {{
     "measures": ["..."],
     "dimensions": ["..."],            // optional, for grouping/breakdowns
-    "timeDimensions": [{{ "dimension": "...created_at", "dateRange": "last month" }}],  // optional
+    "timeDimensions": [{{ "dimension": "...created_at", "dateRange": "last 6 months", "granularity": "month" }}],  // optional
     "filters": [{{ "member": "...", "operator": "equals", "values": ["card"] }}],       // optional
     "limit": 100
   }}
 - dateRange accepts relative strings: "today", "yesterday", "this week",
   "last week", "last 7 days", "last 30 days", "this month", "last month", "this year".
+- granularity (optional, inside a timeDimension) buckets a time series: one of
+  "day", "week", "month", "year". Use it for "over time", "by month", "trend",
+  "daily/monthly ..." questions so each row is one time bucket.
 - filter operators: equals, notEquals, contains, gt, gte, lt, lte, set, notSet.
 - If the question cannot be answered with the available members, output:
   {{ "error": "short reason" }}

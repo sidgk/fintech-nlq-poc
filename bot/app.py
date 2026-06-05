@@ -98,35 +98,51 @@ def format_reply(question: str, out: dict) -> str:
     return f"{body}\n\n_resolved via semantic layer:_ `{spec}`"
 
 
+def _wants_chart(q: str) -> bool:
+    q = q.lower()
+    return any(w in q for w in ("chart", "graph", "plot", "bar", "column", "visual", "trend"))
+
+
+def _wants_trend(q: str) -> bool:
+    q = q.lower()
+    return any(w in q for w in ("trend", "trendline", "regression", "line"))
+
+
 def export_to_sheet(thread_ts: str, question: str, rows: list) -> str:
-    """Create or modify the thread's Google Sheet based on the user's intent.
-    Returns a one-line Slack status with the link."""
+    """Create or modify the thread's Google Sheet based on the user's intent,
+    optionally drawing a chart. Returns a one-line Slack status with the link."""
     import sheets
     import thread_store
 
     state = thread_store.get(thread_ts)
     if not state:
-        # First question in this thread → new spreadsheet.
         sid, url, tab = sheets.create_spreadsheet(question, question, rows)
-        thread_store.put(thread_ts, sid, tab, question)
-        return f":bar_chart: <{url}|Open in Google Sheets> · tab *{tab}*"
+        prefix, verb = ":bar_chart:", f"<{url}|Open in Google Sheets> · tab *{tab}*"
+    else:
+        sid = state["spreadsheet_id"]
+        url = sheets.url_for(sid)
+        action = classify_intent(state["last_question"], question)
+        if action == "new_sheet":
+            sid, url, tab = sheets.create_spreadsheet(question, question, rows)
+            prefix, verb = ":bar_chart:", f"New sheet → <{url}|open> · tab *{tab}*"
+        elif action == "refine":
+            tab = sheets.replace_tab(sid, state["last_tab"], rows)
+            prefix, verb = ":pencil2:", f"Updated tab *{tab}* → <{url}|open>"
+        else:  # new_tab
+            tab = sheets.add_tab(sid, question, rows)
+            prefix, verb = ":heavy_plus_sign:", f"Added tab *{tab}* → <{url}|open>"
 
-    sid = state["spreadsheet_id"]
-    url = sheets.url_for(sid)
-    action = classify_intent(state["last_question"], question)
-
-    if action == "new_sheet":
-        sid, url, tab = sheets.create_spreadsheet(question, question, rows)
-        thread_store.put(thread_ts, sid, tab, question)
-        return f":bar_chart: New sheet → <{url}|open> · tab *{tab}*"
-    if action == "refine":
-        tab = sheets.replace_tab(sid, state["last_tab"], rows)
-        thread_store.put(thread_ts, sid, tab, question)
-        return f":pencil2: Updated tab *{tab}* → <{url}|open>"
-    # default: a different question → new tab in the same spreadsheet
-    tab = sheets.add_tab(sid, question, rows)
     thread_store.put(thread_ts, sid, tab, question)
-    return f":heavy_plus_sign: Added tab *{tab}* → <{url}|open>"
+
+    # Optional chart (and trend line) when the user asks for one.
+    if _wants_chart(question):
+        try:
+            if sheets.add_chart(sid, tab, with_trend=_wants_trend(question)):
+                verb += " · 📊 chart" + (" + trend line" if _wants_trend(question) else "")
+        except Exception:
+            pass
+
+    return f"{prefix} {verb}"
 
 
 def handle_question(question: str, thread_ts: str) -> str:
