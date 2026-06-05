@@ -189,16 +189,65 @@ def _resolve_json(system: str, question: str) -> dict:
 
 
 _TIME_SERIES_WORDS = ("trend", "over time", "by day", "by week", "by month",
-                      "by year", "daily", "weekly", "monthly", "yearly",
-                      "time series", "per day", "per week", "per month",
-                      "each day", "each week", "each month")
+                      "by quarter", "by year", "daily", "weekly", "monthly",
+                      "quarterly", "yearly", "time series", "per day", "per week",
+                      "per month", "per quarter", "per year", "each day",
+                      "each week", "each month", "each quarter")
+
+# Cube member catalog, cached for the process. Used to repair member names the
+# LLM gets slightly wrong (e.g. bare "created_at" -> "payments_overview.created_at").
+_MEMBER_INDEX = None
+
+
+def _member_index():
+    global _MEMBER_INDEX
+    if _MEMBER_INDEX is not None:
+        return _MEMBER_INDEX
+    full, bare = set(), {}
+    try:
+        cubes = requests.get(f"{CUBE_API_URL}/meta", timeout=30).json().get("cubes", [])
+        for c in cubes:
+            is_view = c.get("type") == "view"
+            for m in c.get("measures", []) + c.get("dimensions", []):
+                name = m["name"]
+                full.add(name)
+                short = name.split(".")[-1]
+                if is_view or short not in bare:   # the view wins for bare lookups
+                    bare[short] = name
+    except Exception:
+        pass
+    _MEMBER_INDEX = (full, bare)
+    return _MEMBER_INDEX
+
+
+def _qualify(member):
+    """Repair a member reference to a valid 'cube.member' name from the catalog."""
+    if not isinstance(member, str) or not member:
+        return member
+    full, bare = _member_index()
+    if member in full:
+        return member
+    short = member.split(".")[-1]
+    return bare.get(short, member if "." in member else f"payments_overview.{member}")
 
 
 def _sanitize_spec(spec: dict, question: str) -> dict:
-    """Deterministic guardrail: only keep time-series granularity when the user
-    actually asked for one. Stops 'last week' fanning out into daily buckets."""
+    """Deterministic guardrails before a spec hits Cube:
+    1) qualify every member name (cube.member), repairing the LLM's near-misses;
+    2) only keep time-series granularity when the user actually asked for one."""
     if not isinstance(spec, dict):
         return spec
+    if spec.get("measures"):
+        spec["measures"] = [_qualify(m) for m in spec["measures"]]
+    if spec.get("dimensions"):
+        spec["dimensions"] = [_qualify(d) for d in spec["dimensions"]]
+    for td in spec.get("timeDimensions", []) or []:
+        if td.get("dimension"):
+            td["dimension"] = _qualify(td["dimension"])
+    for f in spec.get("filters", []) or []:
+        if f.get("member"):
+            f["member"] = _qualify(f["member"])
+
     q = question.lower()
     if not any(w in q for w in _TIME_SERIES_WORDS):
         for td in spec.get("timeDimensions", []) or []:

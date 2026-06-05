@@ -164,9 +164,14 @@ def export_to_sheet(thread_ts: str, question: str, rows: list) -> str:
     return f"{prefix} {verb}"
 
 
-# Remember the last query spec per thread so "how was this calculated?" can
-# explain the metric the stakeholder is looking at.
+# Remember the last query spec + question per thread, so "how was this
+# calculated?" can explain it and "aggregate the same per quarter" has context.
 _LAST_QUERY = {}
+_LAST_QUESTION = {}
+
+# Words that signal the message refers back to the previous question.
+_REFERENTIAL = ("the same", "same ", "those", "these instead", "again", "instead",
+                "as well", "redo", "do it", "do the same", " it ", "that one")
 
 
 def _wants_lineage(text: str, thread_ts: str) -> bool:
@@ -204,11 +209,23 @@ def handle_question(question: str, thread_ts: str) -> str:
         except Exception as e:
             return f":warning: couldn't build the lineage: {e}"
 
-    out = answer_question(question)
+    # Contextual follow-up: if this references the previous question
+    # ("the same per quarter", "those again"), give the resolver that context.
+    q_for_resolver = question
+    prev = _LAST_QUESTION.get(thread_ts)
+    if prev and any(w in f" {question.lower()} " for w in _REFERENTIAL):
+        q_for_resolver = (
+            f'Earlier request: "{prev}". Follow-up: "{question}". Answer the '
+            f"follow-up; where it says the same/those/it/again, reuse the earlier "
+            f"request's measures and dimensions and only apply the new change."
+        )
+
+    out = answer_question(q_for_resolver)
     if out.get("chat"):                           # greeting / small talk / unclear
         return out["chat"]
     if out.get("query"):
-        _LAST_QUERY[thread_ts] = out["query"]     # remember for a follow-up lineage ask
+        _LAST_QUERY[thread_ts] = out["query"]     # for a follow-up lineage ask
+        _LAST_QUESTION[thread_ts] = question      # store the ORIGINAL phrasing
     reply = format_reply(question, out)
     if _sheets_ready() and out.get("rows"):
         try:
