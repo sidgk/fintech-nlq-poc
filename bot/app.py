@@ -7,6 +7,7 @@ It calls the resolver and replies with the number + the resolved query.
 """
 
 import os
+import re
 import sys
 import threading
 
@@ -269,11 +270,15 @@ def _respond_async(say, question: str, thread_ts: str):
     threading.Thread(target=work, daemon=True).start()
 
 
+def _strip_mentions(text: str) -> str:
+    """Remove <@USERID> mention markup so the resolver sees a clean question."""
+    return re.sub(r"<@[A-Z0-9]+>", "", text or "").strip()
+
+
 @app.event("app_mention")
 def on_mention(event, say):
-    text = event.get("text", "")
-    # strip the leading <@BOTID> mention
-    question = text.split(">", 1)[-1].strip() if ">" in text else text
+    # Fires for @mentions in CHANNELS (not DMs).
+    question = _strip_mentions(event.get("text", ""))
     thread_ts = event.get("thread_ts") or event.get("ts")
     _respond_async(say, question, thread_ts)
 
@@ -283,15 +288,19 @@ def on_message(event, say):
     # ignore the bot's own messages, edits, joins, etc.
     if event.get("bot_id") or event.get("subtype"):
         return
-    text = event.get("text", "") or ""
-    # if the message @mentions the bot, let on_mention handle it (avoid double reply)
-    if BOT_USER_ID and f"<@{BOT_USER_ID}>" in text:
+    text = _strip_mentions(event.get("text", ""))
+    if not text:
         return
 
+    # DMs: ALWAYS handle here. Slack does NOT fire app_mention for DMs, so even a
+    # DM that @mentions the bot must be answered by this handler.
     if event.get("channel_type") == "im":
-        # DM: thread by the message itself
         thread_ts = event.get("thread_ts") or event.get("ts")
         _respond_async(say, text, thread_ts)
+        return
+
+    # In a CHANNEL: if it @mentions the bot, app_mention already handles it.
+    if BOT_USER_ID and f"<@{BOT_USER_ID}>" in (event.get("text") or ""):
         return
 
     # Mention-free follow-up inside a channel thread the bot already owns.
