@@ -1,6 +1,6 @@
-# Manager brief — the whole system in plain English
+# Overview — the whole system in plain English
 
-A one-hour cram sheet. Read top to bottom; the Q&A at the end is your safety net.
+A plain-English walkthrough of the architecture, with a short FAQ at the end.
 
 ---
 
@@ -31,7 +31,7 @@ A one-hour cram sheet. Read top to bottom; the Q&A at the end is your safety net
 
 In this project, the semantic layer is **literally a folder of plain-text files** (`model/*.yml`). Open `model/cubes/payments.yml` — that file *is* the semantic layer. Adding a metric = adding a few lines of YAML, reviewed in Git like any code.
 
-**Why it matters (say this to your manager):**
+**Why it matters:**
 1. **One source of truth.** "Revenue" is defined once. Nobody's number disagrees with anyone else's.
 2. **Governance.** People — and the AI — can only use metrics we've approved. They can't invent a calculation.
 3. **Trust.** Every answer traces back to a reviewed definition. That's what makes it safe for finance/risk.
@@ -115,7 +115,7 @@ So the full stack: **dbt cleans → Cube serves → LLM translates → Slack del
 
 ---
 
-## 6. Anticipated manager questions (your safety net)
+## 6. Frequently asked questions
 
 **Q: Why not just use ChatGPT / text-to-SQL on our database?**
 > Because it's ungovernable. A text-to-SQL model invents queries against raw tables — it can compute "revenue" five different ways or join the wrong table, and you can't trust or audit it. Our AI can only pick from metrics we've defined and reviewed, so every answer is consistent and traceable. Speed of AI, safety of a governed system.
