@@ -162,11 +162,14 @@ def _respond_async(say, question: str, thread_ts: str):
     """Answer in a background thread so the Slack event is acked instantly
     (no 3-second-timeout retries). Posts a placeholder, then edits it with the
     result when the (sometimes slow) pipeline + Sheets work finishes."""
+    waiting = ":wave: Hang on, I'm working on it…"
+    if _wants_chart(question):
+        waiting = ":wave: Hang on, I'm working on it — crunching the numbers and drawing your chart… :bar_chart:"
+
     def work():
         placeholder = None
         try:
-            placeholder = say(text=":hourglass_flowing_sand: crunching the numbers…",
-                              thread_ts=thread_ts)
+            placeholder = say(text=waiting, thread_ts=thread_ts)
         except Exception:
             pass
         try:
