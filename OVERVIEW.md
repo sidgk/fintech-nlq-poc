@@ -140,7 +140,7 @@ So the full stack: **dbt cleans → Cube serves → LLM translates → Slack del
 
 ---
 
-## 7. Vocabulary cheat-sheet
+## 7. Glossary
 
 | Term | One line |
 |---|---|
