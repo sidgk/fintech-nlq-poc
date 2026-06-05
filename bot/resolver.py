@@ -33,6 +33,11 @@ GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 
+# Ollama (local, FREE, unlimited) — used when LLM_PROVIDER=ollama. Runs the
+# model on this machine; no API key, no rate limits, fully private/offline.
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.1:8b")
+
 
 def fetch_catalog() -> str:
     """Read the semantic layer and render a compact catalog for the prompt."""
@@ -75,8 +80,11 @@ Rules:
 - dateRange accepts relative strings: "today", "yesterday", "this week",
   "last week", "last 7 days", "last 30 days", "this month", "last month", "this year".
 - granularity (optional, inside a timeDimension) buckets a time series: one of
-  "day", "week", "month", "year". Use it for "over time", "by month", "trend",
-  "daily/monthly ..." questions so each row is one time bucket.
+  "day", "week", "month", "year", so each row is one time bucket. ONLY add it
+  when the user EXPLICITLY wants a time series — i.e. the words "over time",
+  "trend", "by day/week/month/year", "daily", "weekly", "monthly". A plain date
+  filter like "last 30 days", "this month", or "last week" is just a dateRange:
+  DO NOT add granularity for those (omit it entirely).
 - filter operators: equals, notEquals, contains, gt, gte, lt, lte, set, notSet.
 - If the question cannot be answered with the available members, output:
   {{ "error": "short reason" }}
@@ -137,11 +145,38 @@ def _resolve_with_anthropic(system: str, question: str) -> dict:
     return _strip_to_json(text)
 
 
-def question_to_query(question: str, catalog: str) -> dict:
-    system = SYSTEM_TEMPLATE.format(catalog=catalog)
+def _resolve_with_ollama(system: str, question: str) -> dict:
+    """Local Ollama. format=json forces a single valid JSON object."""
+    resp = requests.post(
+        f"{OLLAMA_URL}/api/chat",
+        json={
+            "model": OLLAMA_MODEL,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": question},
+            ],
+            "stream": False,
+            "format": "json",                  # constrain to valid JSON
+            "options": {"temperature": 0},
+        },
+        timeout=120,                           # first call loads the model into RAM
+    )
+    resp.raise_for_status()
+    text = resp.json().get("message", {}).get("content", "")
+    return _strip_to_json(text)
+
+
+def _resolve_json(system: str, question: str) -> dict:
+    """Dispatch a system+question to the configured provider, expecting JSON."""
     if LLM_PROVIDER == "anthropic":
         return _resolve_with_anthropic(system, question)
+    if LLM_PROVIDER == "ollama":
+        return _resolve_with_ollama(system, question)
     return _resolve_with_gemini(system, question)
+
+
+def question_to_query(question: str, catalog: str) -> dict:
+    return _resolve_json(SYSTEM_TEMPLATE.format(catalog=catalog), question)
 
 
 INTENT_SYSTEM = """You classify how a follow-up analytics request relates to the
@@ -158,10 +193,7 @@ def classify_intent(prev_question: str, new_question: str) -> str:
     """Return 'refine' | 'new_tab' | 'new_sheet' for a thread follow-up."""
     user = f'Previous request: "{prev_question}"\nNew request: "{new_question}"'
     try:
-        if LLM_PROVIDER == "anthropic":
-            out = _resolve_with_anthropic(INTENT_SYSTEM, user)
-        else:
-            out = _resolve_with_gemini(INTENT_SYSTEM, user)
+        out = _resolve_json(INTENT_SYSTEM, user)
         action = str(out.get("action", "new_tab")).strip().lower()
         return action if action in ("refine", "new_tab", "new_sheet") else "new_tab"
     except Exception:
