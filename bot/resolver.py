@@ -86,7 +86,19 @@ Rules:
   filter like "last 30 days", "this month", or "last week" is just a dateRange:
   DO NOT add granularity for those (omit it entirely).
 - filter operators: equals, notEquals, contains, gt, gte, lt, lte, set, notSet.
-- If the question cannot be answered with the available members, output:
+- FIRST decide if this is even a data question. If it is NOT — a greeting, small
+  talk, thanks, a "test", or anything unclear — DO NOT invent a query. Reply
+  conversationally instead:
+  {{ "chat": "<short, friendly reply>" }}
+  Examples:
+    greeting ("hi", "hello", "how are you") ->
+      {{ "chat": "Hey! Doing great, thanks for asking 🙂 Ask me anything about our payments — like revenue by merchant category, or success rate by card brand." }}
+    capability ("what can you do?", "help") ->
+      {{ "chat": "I answer questions about our payments data — revenue, success rates, counts, averages — sliced by category, card brand, country, customer segment, or time. Try: failed payments by method last week." }}
+    unclear ("test", random words) ->
+      {{ "chat": "I'm here! Ask me a payments question, e.g. how many successful payments did we have last month?" }}
+- Only emit a query spec when the message is genuinely asking about the data.
+- If it IS a data question but cannot be answered with the available members:
   {{ "error": "short reason" }}
 """
 
@@ -176,8 +188,27 @@ def _resolve_json(system: str, question: str) -> dict:
     return _resolve_with_gemini(system, question)
 
 
+_TIME_SERIES_WORDS = ("trend", "over time", "by day", "by week", "by month",
+                      "by year", "daily", "weekly", "monthly", "yearly",
+                      "time series", "per day", "per week", "per month",
+                      "each day", "each week", "each month")
+
+
+def _sanitize_spec(spec: dict, question: str) -> dict:
+    """Deterministic guardrail: only keep time-series granularity when the user
+    actually asked for one. Stops 'last week' fanning out into daily buckets."""
+    if not isinstance(spec, dict):
+        return spec
+    q = question.lower()
+    if not any(w in q for w in _TIME_SERIES_WORDS):
+        for td in spec.get("timeDimensions", []) or []:
+            td.pop("granularity", None)
+    return spec
+
+
 def question_to_query(question: str, catalog: str) -> dict:
-    return _resolve_json(SYSTEM_TEMPLATE.format(catalog=catalog), question)
+    spec = _resolve_json(SYSTEM_TEMPLATE.format(catalog=catalog), question)
+    return _sanitize_spec(spec, question)
 
 
 INTENT_SYSTEM = """You classify how a follow-up analytics request relates to the
@@ -219,9 +250,11 @@ def run_query(cube_query: dict) -> dict:
 
 
 def answer_question(question: str) -> dict:
-    """End-to-end: returns {'query':..., 'rows':...} or {'error':...}."""
+    """End-to-end: returns {'chat':...} | {'query':..., 'rows':...} | {'error':...}."""
     catalog = fetch_catalog()
     spec = question_to_query(question, catalog)
+    if "chat" in spec:                       # greeting / small talk / unclear
+        return {"chat": spec["chat"]}
     if "error" in spec:
         return {"error": spec["error"]}
     result = run_query(spec)

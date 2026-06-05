@@ -7,6 +7,7 @@ It calls the resolver and replies with the number + the resolved query.
 """
 
 import os
+import sys
 import threading
 
 from slack_bolt import App
@@ -27,6 +28,18 @@ try:
     BOT_USER_ID = app.client.auth_test().get("user_id")
 except Exception:
     BOT_USER_ID = None
+
+
+@app.middleware
+def _log_every_request(body, next):
+    """Print every Socket Mode request so we can confirm events actually arrive."""
+    try:
+        ev = (body or {}).get("event", {}) or {}
+        print(f"[recv] event={ev.get('type')} ch={ev.get('channel_type')} "
+              f"text={(ev.get('text') or '')[:60]!r}", file=sys.stderr, flush=True)
+    except Exception:
+        pass
+    return next()
 
 
 def _sheets_ready() -> bool:
@@ -82,6 +95,8 @@ def _table(rows: list) -> str:
 
 
 def format_reply(question: str, out: dict) -> str:
+    if "chat" in out:
+        return out["chat"]
     if "error" in out and "rows" not in out:
         return f":warning: I couldn't answer that with the current metrics.\n> {out['error']}"
 
@@ -173,6 +188,8 @@ def handle_question(question: str, thread_ts: str) -> str:
             return f":warning: couldn't build the lineage: {e}"
 
     out = answer_question(question)
+    if out.get("chat"):                           # greeting / small talk / unclear
+        return out["chat"]
     if out.get("query"):
         _LAST_QUERY[thread_ts] = out["query"]     # remember for a follow-up lineage ask
     reply = format_reply(question, out)
