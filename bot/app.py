@@ -13,7 +13,7 @@ import threading
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 
-from resolver import answer_question, classify_intent
+from resolver import answer_question, classify_intent, is_lineage
 
 app = App(token=os.environ["SLACK_BOT_TOKEN"])
 
@@ -117,7 +117,9 @@ def format_reply(question: str, out: dict) -> str:
 
 def _wants_chart(q: str) -> bool:
     q = q.lower()
-    return any(w in q for w in ("chart", "graph", "plot", "bar", "column", "visual", "trend"))
+    return any(w in q for w in ("chart", "graph", "plot", "bar", "column", "visual",
+                                "trend", "pictorial", "picture", "diagram", "draw",
+                                "pie", "histogram"))
 
 
 def _wants_trend(q: str) -> bool:
@@ -167,20 +169,35 @@ def export_to_sheet(thread_ts: str, question: str, rows: list) -> str:
 _LAST_QUERY = {}
 
 
-def _wants_lineage(text: str) -> bool:
+def _wants_lineage(text: str, thread_ts: str) -> bool:
+    """Detect a 'how did you get this number?' question about the thread's last
+    metric. Keyword fast-path first, then an LLM intent check for phrasings the
+    keywords miss (the user won't always say 'lineage')."""
+    if not _LAST_QUERY.get(thread_ts):
+        return False                          # nothing to explain yet
     t = text.lower()
-    return any(p in t for p in (
+    keywords = (
         "how was this calculated", "how was it calculated", "how is this calculated",
-        "how did you calculate", "how did you get this", "how did you arrive",
-        "lineage", "where does this come from", "where did this come from",
+        "how did you calculate", "how did you get this", "how did you get these",
+        "how did you arrive", "how did you end up", "how did you come up",
+        "how'd you get", "where does this come from", "where do these come from",
+        "where did this come from", "where did these come from", "lineage",
         "show me the source", "show the source", "how was this derived",
-        "calculation flow", "how this metric", "trace this",
-    ))
+        "how were these", "calculation flow", "how this metric", "trace this",
+        "these numbers", "this number", "how did you compute", "what's the source",
+    )
+    if any(p in t for p in keywords):
+        return True
+    # LLM fallback only when the message hints at a "how/why/where" meta-question
+    if any(w in t for w in ("how", "why", "where", "explain", "calculat",
+                            "deriv", "come", "source", "number", "arrive", "figure")):
+        return is_lineage(text)
+    return False
 
 
 def handle_question(question: str, thread_ts: str) -> str:
     # Lineage question about the thread's last metric — explain, don't re-query.
-    if _wants_lineage(question) and _LAST_QUERY.get(thread_ts):
+    if _wants_lineage(question, thread_ts):
         try:
             import lineage
             return lineage.explain(_LAST_QUERY[thread_ts])

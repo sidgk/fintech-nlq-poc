@@ -232,6 +232,23 @@ def classify_intent(prev_question: str, new_question: str) -> str:
         return "new_tab"
 
 
+LINEAGE_SYSTEM = """Decide if the user is asking HOW a previously-shown number or
+metric was calculated/derived, or WHERE it came from (its source/lineage).
+Output ONLY JSON: {"lineage": true} or {"lineage": false}.
+YES: "how did you end up with these numbers", "how did you get this",
+"how did you come up with that", "where does this come from", "how is this computed",
+"how was revenue calculated", "explain how you got this", "what's the source of this".
+NO: a brand-new data question ("revenue by country"), a greeting, a chart request."""
+
+
+def is_lineage(text: str) -> bool:
+    """LLM intent check: is the user asking how the prior result was derived?"""
+    try:
+        return bool(_resolve_json(LINEAGE_SYSTEM, text).get("lineage"))
+    except Exception:
+        return False
+
+
 def run_query(cube_query: dict) -> dict:
     """POST the spec to Cube. Cube may answer 'Continue wait' while building — poll."""
     for _ in range(10):
