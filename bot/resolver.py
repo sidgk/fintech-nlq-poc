@@ -109,11 +109,19 @@ def _resolve_with_gemini(system: str, question: str) -> dict:
         },
     }
     url = f"{GEMINI_BASE}/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
-    resp = requests.post(url, json=body, timeout=60)
-    resp.raise_for_status()
-    data = resp.json()
-    text = data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
-    return _strip_to_json(text)
+    # NOTE: the key is in the URL, so we must NEVER surface the raw error/URL.
+    # Retry 429s (free-tier rate limit) with exponential backoff.
+    for attempt in range(4):
+        resp = requests.post(url, json=body, timeout=60)
+        if resp.status_code == 429:
+            time.sleep(2 ** attempt)            # 1s, 2s, 4s
+            continue
+        if resp.status_code != 200:
+            raise RuntimeError(f"Gemini API returned HTTP {resp.status_code}")
+        data = resp.json()
+        text = data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+        return _strip_to_json(text)
+    raise RuntimeError("Gemini is rate-limiting (free-tier quota) — try again in a minute.")
 
 
 def _resolve_with_anthropic(system: str, question: str) -> dict:

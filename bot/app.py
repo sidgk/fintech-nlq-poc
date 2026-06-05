@@ -175,7 +175,11 @@ def _respond_async(say, question: str, thread_ts: str):
         try:
             text = handle_question(question, thread_ts)
         except Exception as e:
-            text = f":warning: sorry, that failed: {e}"
+            msg = str(e)
+            key = os.environ.get("GEMINI_API_KEY", "")
+            if key:
+                msg = msg.replace(key, "***")     # never echo the API key to Slack
+            text = f":warning: sorry, that failed: {msg}"
         try:
             if placeholder and placeholder.get("ts"):
                 app.client.chat_update(channel=placeholder["channel"],
