@@ -7,6 +7,8 @@ It calls the resolver and replies with the number + the resolved query.
 """
 
 import os
+import threading
+
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 
@@ -156,13 +158,40 @@ def handle_question(question: str, thread_ts: str) -> str:
     return reply
 
 
+def _respond_async(say, question: str, thread_ts: str):
+    """Answer in a background thread so the Slack event is acked instantly
+    (no 3-second-timeout retries). Posts a placeholder, then edits it with the
+    result when the (sometimes slow) pipeline + Sheets work finishes."""
+    def work():
+        placeholder = None
+        try:
+            placeholder = say(text=":hourglass_flowing_sand: crunching the numbers…",
+                              thread_ts=thread_ts)
+        except Exception:
+            pass
+        try:
+            text = handle_question(question, thread_ts)
+        except Exception as e:
+            text = f":warning: sorry, that failed: {e}"
+        try:
+            if placeholder and placeholder.get("ts"):
+                app.client.chat_update(channel=placeholder["channel"],
+                                       ts=placeholder["ts"], text=text)
+            else:
+                say(text=text, thread_ts=thread_ts)
+        except Exception:
+            say(text=text, thread_ts=thread_ts)
+
+    threading.Thread(target=work, daemon=True).start()
+
+
 @app.event("app_mention")
 def on_mention(event, say):
     text = event.get("text", "")
     # strip the leading <@BOTID> mention
     question = text.split(">", 1)[-1].strip() if ">" in text else text
     thread_ts = event.get("thread_ts") or event.get("ts")
-    say(text=handle_question(question, thread_ts), thread_ts=thread_ts)
+    _respond_async(say, question, thread_ts)
 
 
 @app.event("message")
@@ -178,7 +207,7 @@ def on_message(event, say):
     if event.get("channel_type") == "im":
         # DM: thread by the message itself
         thread_ts = event.get("thread_ts") or event.get("ts")
-        say(text=handle_question(text, thread_ts))
+        _respond_async(say, text, thread_ts)
         return
 
     # Mention-free follow-up inside a channel thread the bot already owns.
@@ -187,7 +216,7 @@ def on_message(event, say):
     if thread_ts:
         import thread_store
         if thread_store.get(thread_ts):
-            say(text=handle_question(text, thread_ts), thread_ts=thread_ts)
+            _respond_async(say, text, thread_ts)
 
 
 if __name__ == "__main__":
