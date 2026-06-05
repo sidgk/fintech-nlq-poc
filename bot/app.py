@@ -253,4 +253,13 @@ def on_message(event, say):
 
 
 if __name__ == "__main__":
+    # Pre-warm the local model so the FIRST Slack question is fast (with
+    # keep_alive=-1 in the resolver, it then stays pinned in RAM).
+    if os.environ.get("LLM_PROVIDER", "").lower() == "ollama":
+        try:
+            import resolver
+            resolver._resolve_with_ollama("Reply with an empty JSON object.", "warm up")
+            print("Ollama model warmed and pinned.")
+        except Exception:
+            pass
     SocketModeHandler(app, os.environ["SLACK_APP_TOKEN"]).start()

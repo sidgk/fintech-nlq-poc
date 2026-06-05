@@ -158,6 +158,7 @@ def _resolve_with_ollama(system: str, question: str) -> dict:
             "stream": False,
             "format": "json",                  # constrain to valid JSON
             "options": {"temperature": 0},
+            "keep_alive": -1,                  # pin the model in RAM (no cold reloads)
         },
         timeout=120,                           # first call loads the model into RAM
     )
