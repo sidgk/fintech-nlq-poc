@@ -201,17 +201,18 @@ def _wants_lineage(text: str, thread_ts: str) -> bool:
     return False
 
 
-def handle_question(question: str, thread_ts: str) -> str:
+def compute_answer(question: str, thread_ts: str):
+    """FAST path: returns (reply_text, out). Does NOT touch Google Sheets — so
+    the numbers reach the user in a few seconds. Sheet/chart happens separately."""
     # Lineage question about the thread's last metric — explain, don't re-query.
     if _wants_lineage(question, thread_ts):
         try:
             import lineage
-            return lineage.explain(_LAST_QUERY[thread_ts])
+            return lineage.explain(_LAST_QUERY[thread_ts]), None
         except Exception as e:
-            return f":warning: couldn't build the lineage: {e}"
+            return f":warning: couldn't build the lineage: {e}", None
 
-    # Contextual follow-up: if this references the previous question
-    # ("the same per quarter", "those again"), give the resolver that context.
+    # Contextual follow-up ("the same per quarter", "those again").
     q_for_resolver = question
     prev = _LAST_QUESTION.get(thread_ts)
     if prev and any(w in f" {question.lower()} " for w in _REFERENTIAL):
@@ -223,17 +224,23 @@ def handle_question(question: str, thread_ts: str) -> str:
 
     out = answer_question(q_for_resolver)
     if out.get("chat"):                           # greeting / small talk / unclear
-        return out["chat"]
+        return out["chat"], None
     if out.get("query"):
         _LAST_QUERY[thread_ts] = out["query"]     # for a follow-up lineage ask
         _LAST_QUESTION[thread_ts] = question      # store the ORIGINAL phrasing
-    reply = format_reply(question, out)
-    if _sheets_ready() and out.get("rows"):
+    return format_reply(question, out), out
+
+
+def handle_question(question: str, thread_ts: str) -> str:
+    """Combined answer + sheet (used by tests/CLI). The bot uses the faster
+    two-phase path in _respond_async instead."""
+    text, out = compute_answer(question, thread_ts)
+    if out and _sheets_ready() and out.get("rows"):
         try:
-            reply += "\n\n" + export_to_sheet(thread_ts, question, out["rows"])
-        except Exception as e:  # never let a Sheets hiccup break the answer
-            reply += f"\n\n_(Google Sheet export skipped: {e})_"
-    return reply
+            text += "\n\n" + export_to_sheet(thread_ts, question, out["rows"])
+        except Exception as e:
+            text += f"\n\n_(Google Sheet export skipped: {e})_"
+    return text
 
 
 def _respond_async(say, question: str, thread_ts: str):
@@ -250,22 +257,42 @@ def _respond_async(say, question: str, thread_ts: str):
             placeholder = say(text=waiting, thread_ts=thread_ts)
         except Exception:
             pass
+        ch = placeholder.get("channel") if placeholder else None
+        ts = placeholder.get("ts") if placeholder else None
+
+        def show(t):
+            try:
+                if ch and ts:
+                    app.client.chat_update(channel=ch, ts=ts, text=t)
+                else:
+                    say(text=t, thread_ts=thread_ts)
+            except Exception:
+                try:
+                    say(text=t, thread_ts=thread_ts)
+                except Exception:
+                    pass
+
+        # PHASE 1 — the answer (numbers), fast (~3-5s)
         try:
-            text = handle_question(question, thread_ts)
+            text, out = compute_answer(question, thread_ts)
         except Exception as e:
             msg = str(e)
             key = os.environ.get("GEMINI_API_KEY", "")
             if key:
                 msg = msg.replace(key, "***")     # never echo the API key to Slack
-            text = f":warning: sorry, that failed: {msg}"
-        try:
-            if placeholder and placeholder.get("ts"):
-                app.client.chat_update(channel=placeholder["channel"],
-                                       ts=placeholder["ts"], text=text)
-            else:
-                say(text=text, thread_ts=thread_ts)
-        except Exception:
-            say(text=text, thread_ts=thread_ts)
+            show(f":warning: sorry, that failed: {msg}")
+            return
+
+        will_export = bool(out and _sheets_ready() and out.get("rows"))
+        show(text + ("\n\n_:bar_chart: building your Google Sheet…_" if will_export else ""))
+
+        # PHASE 2 — Google Sheet + chart (slower), appended when ready
+        if will_export:
+            try:
+                status = export_to_sheet(thread_ts, question, out["rows"])
+                show(text + "\n\n" + status)
+            except Exception:
+                show(text)                        # keep the answer even if the sheet fails
 
     threading.Thread(target=work, daemon=True).start()
 
@@ -322,4 +349,24 @@ if __name__ == "__main__":
             print("Ollama model warmed and pinned.")
         except Exception:
             pass
-    SocketModeHandler(app, os.environ["SLACK_APP_TOKEN"]).start()
+    handler = SocketModeHandler(app, os.environ["SLACK_APP_TOKEN"])
+
+    # Watchdog: if the Slack WebSocket stays dead (we saw BrokenPipeErrors that
+    # left the bot alive but deaf), exit so the keepalive wrapper restarts us
+    # with a fresh connection. Only acts on a clearly-disconnected socket.
+    def _watchdog():
+        import time as _t
+        bad = 0
+        while True:
+            _t.sleep(20)
+            try:
+                connected = handler.client is not None and handler.client.is_connected()
+            except Exception:
+                connected = True            # can't tell → don't restart (no false positives)
+            bad = bad + 1 if not connected else 0
+            if bad >= 4:                    # ~80s continuously down
+                print("[watchdog] Slack socket down ~80s — exiting for restart", flush=True)
+                os._exit(1)
+
+    threading.Thread(target=_watchdog, daemon=True).start()
+    handler.start()
