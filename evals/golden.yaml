@@ -1,0 +1,44 @@
+# Golden questions — the AI regression suite. Each case asserts the bot's
+# INTERPRETATION (did it pick the right metric + dimensions?) plus shape and
+# value invariants. Data values are random per seed, so we test structure +
+# invariants, not absolute numbers. Run on every metric / model / prompt change:
+#
+#   python evals/run_evals.py
+#
+# Grow this from 👍 feedback. A failure = the AI mis-understood a question.
+
+- question: "total revenue by merchant category last 30 days"
+  measures: [payments_overview.total_amount]
+  dimensions: [payments_overview.merchants_category]
+  min_rows: 1
+
+- question: "what's our overall success rate?"
+  measures: [payments_overview.success_rate]
+  dimensions: []
+  rows: 1
+  value_between: [0, 100]          # a rate must be a percentage
+
+- question: "success rate by card brand"
+  measures: [payments_overview.success_rate]
+  dimensions: [payments_overview.cards_brand]
+  rows: 3                           # visa / mastercard / amex
+
+- question: "failed payments by payment method"
+  measures: [payments_overview.failed_count]
+  dimensions: [payments_overview.payment_method]
+  rows: 4                           # card / sepa / paypal / apple_pay
+
+- question: "how many successful payments did we have"
+  measures: [payments_overview.succeeded_count]
+  dimensions: []
+  rows: 1
+
+- question: "average payment amount by customer segment"
+  measures: [payments_overview.avg_amount]
+  dimensions: [payments_overview.customers_segment]
+  rows: 3                           # consumer / sme / enterprise
+
+- question: "revenue by merchant country"
+  measures: [payments_overview.total_amount]
+  dimensions: [payments_overview.merchants_country]
+  min_rows: 1
