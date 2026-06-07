@@ -45,6 +45,10 @@ def init():
         c.execute("""CREATE TABLE IF NOT EXISTS answer_cache(
             normalized TEXT PRIMARY KEY, question TEXT, answer TEXT,
             query_spec TEXT, rows_json TEXT, row_count INTEGER, created_ts REAL)""")
+        # one Google Sheet per question, reused across users (built on demand)
+        c.execute("""CREATE TABLE IF NOT EXISTS sheet_cache(
+            normalized TEXT PRIMARY KEY, question TEXT, spreadsheet_id TEXT,
+            url TEXT, created_ts REAL)""")
         c.execute("CREATE INDEX IF NOT EXISTS idx_log_norm ON query_log(normalized)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_log_ts ON query_log(ts)")
         # migration: add feedback column to existing DBs (1=👍, -1=👎, NULL=none)
@@ -116,6 +120,35 @@ def set_feedback(log_id, value):
     try:
         with _conn() as c:
             c.execute("UPDATE query_log SET feedback=? WHERE id=?", (value, log_id))
+    except Exception:
+        pass
+
+
+def sheet_cache_get(question):
+    """Return the existing Google Sheet for this question (if fresh), so the same
+    question reuses one sheet across users instead of creating a new one each time."""
+    norm = normalize(question)
+    try:
+        with _conn() as c:
+            r = c.execute("SELECT spreadsheet_id, url, created_ts FROM sheet_cache "
+                          "WHERE normalized=?", (norm,)).fetchone()
+    except Exception:
+        return None
+    if not r:
+        return None
+    sid, url, created = r
+    if time.time() - created > CACHE_TTL:
+        return None
+    return {"spreadsheet_id": sid, "url": url}
+
+
+def sheet_cache_put(question, spreadsheet_id, url):
+    norm = normalize(question)
+    try:
+        with _conn() as c:
+            c.execute("INSERT OR REPLACE INTO sheet_cache"
+                      "(normalized, question, spreadsheet_id, url, created_ts) VALUES(?,?,?,?,?)",
+                      (norm, question, spreadsheet_id, url, time.time()))
     except Exception:
         pass
 

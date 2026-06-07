@@ -307,12 +307,13 @@ def handle_question(question: str, thread_ts: str) -> str:
     return text
 
 
-def _feedback_blocks(text: str, log_id):
-    """Render the answer with 👍/👎 buttons. Falls back to plain text (None) if
-    there's no log row or the answer is too long for a Slack section block."""
+def _answer_blocks(text: str, log_id, question: str = None, offer_sheet: bool = False):
+    """Answer + 👍/👎 buttons, plus an on-demand 'Open in Google Sheet' button
+    (we build the sheet only if the user clicks it). Falls back to plain text
+    (None) if no log row or the answer is too long for a Slack section block."""
     if not log_id or len(text) > 2900:
         return None
-    return [
+    blocks = [
         {"type": "section", "text": {"type": "mrkdwn", "text": text}},
         {"type": "actions", "block_id": "feedback", "elements": [
             {"type": "button", "text": {"type": "plain_text", "text": "👍 Helpful"},
@@ -321,6 +322,13 @@ def _feedback_blocks(text: str, log_id):
              "action_id": "fb_down", "value": str(log_id)},
         ]},
     ]
+    if offer_sheet and question:
+        label = "📊 Open chart in Google Sheet" if _wants_chart(question) else "📊 Open in Google Sheet"
+        blocks.append({"type": "actions", "block_id": "sheet", "elements": [
+            {"type": "button", "text": {"type": "plain_text", "text": label},
+             "action_id": "view_sheet", "value": question[:1900]},
+        ]})
+    return blocks
 
 
 def _record_feedback(body, action, value):
@@ -331,7 +339,8 @@ def _record_feedback(body, action, value):
         pass
     try:
         msg = body.get("message", {})
-        blocks = [b for b in msg.get("blocks", []) if b.get("type") != "actions"]
+        # remove ONLY the feedback buttons; keep the 'Open in Google Sheet' button
+        blocks = [b for b in msg.get("blocks", []) if b.get("block_id") != "feedback"]
         note = "✅ Thanks for the feedback!" if value == 1 else \
                "🙏 Thanks — noted. I'll use this to improve."
         blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": note}]})
@@ -353,6 +362,66 @@ def _fb_down(ack, body, action):
     _record_feedback(body, action, -1)
 
 
+def _get_or_create_sheet(question: str, rows: list) -> str:
+    """Reuse the cached Google Sheet for this question, or build it once (and
+    share it so any user can open it). Same question → same sheet, for everyone."""
+    cached = querylog.sheet_cache_get(question)
+    if cached:
+        return cached["url"]
+    import sheets
+    sid, url, tab = sheets.create_spreadsheet(question, question, rows)
+    if _wants_chart(question):
+        try:
+            sheets.add_chart(sid, tab, with_trend=_wants_trend(question))
+        except Exception:
+            pass
+    try:
+        sheets.share_anyone(sid)                   # any Slack user who clicks can view
+    except Exception:
+        pass
+    querylog.sheet_cache_put(question, sid, url)
+    return url
+
+
+def _build_sheet_and_reply(body, action):
+    question = action.get("value") or ""
+    channel = body.get("channel", {}).get("id")
+    thread_ts = (body.get("message") or {}).get("thread_ts")
+    ph = None
+    try:
+        ph = app.client.chat_postMessage(channel=channel, thread_ts=thread_ts,
+                                         text=":bar_chart: one sec — preparing your Google Sheet…")
+    except Exception:
+        pass
+
+    def update(t):
+        try:
+            if ph and ph.get("ts"):
+                app.client.chat_update(channel=channel, ts=ph["ts"], text=t)
+            else:
+                app.client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=t)
+        except Exception:
+            pass
+
+    try:
+        cached = querylog.cache_get(question)
+        rows = cached["rows"] if (cached and cached.get("rows")) else \
+            answer_question(question).get("rows", [])
+        if not rows:
+            update(":warning: there's no data to put in a sheet for that one.")
+            return
+        url = _get_or_create_sheet(question, rows)
+        update(f":bar_chart: <{url}|Open in Google Sheet>")
+    except Exception as e:
+        update(f":warning: couldn't build the sheet: {e}")
+
+
+@app.action("view_sheet")
+def _view_sheet(ack, body, action):
+    ack()                                          # ack the click instantly
+    threading.Thread(target=_build_sheet_and_reply, args=(body, action), daemon=True).start()
+
+
 def _respond_async(say, question: str, context_key: str, reply_thread_ts: str = None,
                    waiting: str = None, meta: dict = None):
     """Answer in a background thread (instant ack). `context_key` keys the
@@ -361,8 +430,6 @@ def _respond_async(say, question: str, context_key: str, reply_thread_ts: str = 
     a ts = threaded (channel mentions)."""
     if waiting is None:
         waiting = ":wave: Hang on, I'm working on it…"
-        if _wants_chart(question):
-            waiting = ":wave: Hang on, I'm working on it — crunching the numbers and drawing your chart… :bar_chart:"
 
     def work():
         placeholder = None
@@ -373,8 +440,8 @@ def _respond_async(say, question: str, context_key: str, reply_thread_ts: str = 
         ch = placeholder.get("channel") if placeholder else None
         ts = placeholder.get("ts") if placeholder else None
 
-        def show(t, log_id=None):
-            blocks = _feedback_blocks(t, log_id)  # adds 👍/👎 when log_id is set
+        def show(t, log_id=None, offer_sheet=False):
+            blocks = _answer_blocks(t, log_id, question, offer_sheet)
             try:
                 if ch and ts:
                     app.client.chat_update(channel=ch, ts=ts, text=t, blocks=blocks)
@@ -386,7 +453,8 @@ def _respond_async(say, question: str, context_key: str, reply_thread_ts: str = 
                 except Exception:
                     pass
 
-        # PHASE 1 — the answer (numbers), fast (~3-5s)
+        # Compute + show the numbers. The Google Sheet is built ONLY if the user
+        # clicks the button (no wasted work, and identical questions reuse one sheet).
         try:
             text, out = compute_answer(question, context_key, meta)
         except Exception as e:
@@ -398,18 +466,8 @@ def _respond_async(say, question: str, context_key: str, reply_thread_ts: str = 
             return
 
         log_id = out.get("log_id") if out else None
-        will_export = bool(out and _sheets_ready() and out.get("rows"))
-
-        # PHASE 2 — Google Sheet + chart (slower). Buttons go on the FINAL message.
-        if will_export:
-            show(text + "\n\n_:bar_chart: building your Google Sheet…_")   # interim, no buttons
-            try:
-                status = export_to_sheet(context_key, question, out["rows"])
-                show(text + "\n\n" + status, log_id=log_id)
-            except Exception:
-                show(text, log_id=log_id)
-        else:
-            show(text, log_id=log_id)
+        offer_sheet = bool(out and _sheets_ready() and out.get("rows"))
+        show(text, log_id=log_id, offer_sheet=offer_sheet)
 
     threading.Thread(target=work, daemon=True).start()
 

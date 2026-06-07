@@ -72,6 +72,17 @@ def url_for(spreadsheet_id: str) -> str:
     return f"https://docs.google.com/spreadsheets/d/{spreadsheet_id}/edit"
 
 
+def share_anyone(spreadsheet_id: str):
+    """Make the sheet viewable by anyone with the link, so any Slack user can open
+    the shared (cached) sheet. NOTE: for real data, scope this to your workspace
+    domain instead of 'anyone'."""
+    drive = build("drive", "v3", credentials=get_credentials(), cache_discovery=False)
+    drive.permissions().create(
+        fileId=spreadsheet_id,
+        body={"type": "anyone", "role": "reader"},
+    ).execute()
+
+
 def create_spreadsheet(title: str, tab_title: str, rows: list):
     svc = _services()
     tab = _safe_title(tab_title)
