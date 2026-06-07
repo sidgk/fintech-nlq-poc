@@ -140,6 +140,33 @@ So the full stack: **dbt cleans → Cube serves → LLM translates → Slack del
 
 ---
 
+## 6b. What the bot does today
+
+Beyond answering questions, the bot now:
+- **Numbered follow-up menu** after every answer — `1` numbers in Google Sheets ·
+  `2` chart in Sheets · `3` how was this calculated (lineage) · `4` leave feedback.
+- **Builds a Google Sheet only on demand** (if you pick 1/2), and **reuses one
+  sheet per question** across users instead of making duplicates.
+- **Caches answers** — if 10 people ask the same thing, it's computed once and
+  served to everyone (no repeat database hits).
+- **Logs every question + answer + feedback** (`bot/analytics.py`) — so we can see
+  what's asked, what's adopted, and what to improve.
+- **Lineage on demand** — "how was this calculated?" shows the formula, the
+  source tables, and the exact SQL.
+- **Self-heals** — auto-reconnects, auto-restarts, and answers anything missed
+  while it was offline.
+
+## 6c. How we keep numbers correct (the exec-trust bit)
+
+Two independent gates, run on every change (full detail in `docs/accuracy.md`):
+- **Reconciliation tests** — gold revenue/counts must equal an independent
+  recompute from raw, so a bad join or double-count can't ship.
+- **Golden-question evals** — a fixed set of question→expected-answer checks that
+  fail loudly if the AI ever mis-interprets a question.
+
+On anything ambiguous the goal is **ask, don't guess** — better to clarify than to
+be confidently wrong. See `ROADMAP.md` for where this goes next.
+
 ## 7. Glossary
 
 | Term | One line |

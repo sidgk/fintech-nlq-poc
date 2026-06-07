@@ -4,14 +4,24 @@ A working proof-of-concept: a stakeholder asks a plain-English question in Slack
 and gets the number back, grounded in a **semantic layer** (not raw text-to-SQL).
 
 ```
-Slack  ──question──▶  Resolver (Claude)  ──query spec──▶  Cube (semantic layer)
-                                                              │ compiles to SQL
-                          number ◀── Slack ◀── rows ◀─────  Postgres (your data)
+Slack  ──question──▶  Resolver (local LLM)  ──query spec──▶  Cube (semantic layer)
+                                                                 │ compiles to SQL
+                          number ◀── Slack ◀── rows ◀────────  Postgres (your data)
 ```
 
-The point to show your manager: **the LLM never writes SQL.** It can only pick
-from metrics and dimensions we defined. That's what makes it trustworthy enough
-for finance/risk.
+The point: **the LLM never writes SQL.** It can only pick from metrics and
+dimensions we defined. That's what makes it trustworthy enough for finance/risk.
+
+### 📚 Docs
+| Read this | For |
+|---|---|
+| **[OVERVIEW.md](OVERVIEW.md)** | plain-English explainer + FAQ (start here) |
+| **[ARCHITECTURE.md](ARCHITECTURE.md)** | components, data flow, reliability, accuracy gates |
+| **[WALKTHROUGH.md](WALKTHROUGH.md)** | deep technical trace, raw → answer |
+| **[docs/accuracy.md](docs/accuracy.md)** | how we guarantee correct numbers |
+| **[ROADMAP.md](ROADMAP.md)** | strategic plan (accuracy-first), 3-horizon rollout |
+| **[DEMO_SCRIPT.md](DEMO_SCRIPT.md)** | live demo steps |
+| **[workflow/process.md](workflow/process.md)** | run / operate / extend |
 
 > **Phase 1 is built** — the numbers are no longer hand-curated over raw tables.
 > A **dbt Core Medallion pipeline** (Bronze `raw` → Silver `stg_*` → Gold
