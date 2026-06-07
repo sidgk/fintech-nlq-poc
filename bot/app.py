@@ -309,21 +309,23 @@ def handle_question(question: str, thread_ts: str) -> str:
 
 # ── Follow-up menu (numbered options — works WITHOUT Slack interactivity) ─────
 _PENDING_MENU = {}   # context_key -> {question, log_id, spec}
+_MSG_TO_LOG = {}     # answer message ts -> query_log id (for 👍/👎 emoji reactions)
+_MENU_LABEL = {1: "sheet_numbers", 2: "sheet_chart", 3: "lineage"}
 
 
 def _menu_footer() -> str:
-    lines = ["", "_What next? Just reply with a number:_"]
+    lines = ["", "_Reply with a number:_"]
     if _sheets_ready():
-        lines.append("`1` 📊 See the numbers in Google Sheets")
-        lines.append("`2` 📈 Visualize it (chart) in Google Sheets")
+        lines.append("`1` 📊 Numbers in Google Sheets")
+        lines.append("`2` 📈 Chart in Google Sheets")
     lines.append("`3` 🧬 How was this calculated?")
-    lines.append("`4` 👍 Helpful   ·   `5` 👎 Not quite")
+    lines.append("_…or react 👍 / 👎 to rate this answer._")
     return "\n".join(lines)
 
 
 def _parse_choice(text: str):
-    """Return 1-5 if the message is just a menu pick ('2', 'option 2', '2.')."""
-    m = re.match(r"^\s*(option\s*)?([1-5])\s*[.)]?\s*$", (text or "").lower())
+    """Return 1-3 if the message is just a menu pick ('2', 'option 2', '2.')."""
+    m = re.match(r"^\s*(option\s*)?([1-3])\s*[.)]?\s*$", (text or "").lower())
     return int(m.group(2)) if m else None
 
 
@@ -365,9 +367,18 @@ def _menu_sheet(question, want_chart, say, reply_thread_ts):
         say(text=f":warning: couldn't build the sheet: {e}", thread_ts=reply_thread_ts)
 
 
-def _handle_menu(choice, pending, say, reply_thread_ts):
-    """Run the action the user selected from the numbered menu."""
+def _handle_menu(choice, pending, say, reply_thread_ts, meta=None):
+    """Run the action the user selected — and LOG the pick (so analytics show the
+    most-adopted option per question)."""
     question = pending.get("question", "")
+    m = meta or {}
+    try:
+        querylog.log(m.get("user"), m.get("channel"), question,
+                     f"menu:{_MENU_LABEL.get(choice, choice)}", pending.get("spec"),
+                     0, f"option {choice}", False, 0, _model_name())
+    except Exception:
+        pass
+
     if choice in (1, 2):                                   # 1 = numbers, 2 = chart
         threading.Thread(target=_menu_sheet,
                          args=(question, choice == 2, say, reply_thread_ts), daemon=True).start()
@@ -381,10 +392,6 @@ def _handle_menu(choice, pending, say, reply_thread_ts):
             say(text=lineage.explain(spec), thread_ts=reply_thread_ts)
         except Exception as e:
             say(text=f":warning: couldn't build the lineage: {e}", thread_ts=reply_thread_ts)
-    elif choice in (4, 5):                                 # 4 = 👍, 5 = 👎
-        querylog.set_feedback(pending.get("log_id"), 1 if choice == 4 else -1)
-        say(text="✅ Thanks — glad it helped!" if choice == 4
-                 else "🙏 Thanks — noted, I'll use this to improve.", thread_ts=reply_thread_ts)
 
 
 def _route(text, context_key, say, reply_thread_ts, meta):
@@ -392,7 +399,7 @@ def _route(text, context_key, say, reply_thread_ts, meta):
     choice = _parse_choice(text)
     pending = _PENDING_MENU.get(context_key)
     if choice and pending:
-        _handle_menu(choice, pending, say, reply_thread_ts)
+        _handle_menu(choice, pending, say, reply_thread_ts, meta)
         return
     _respond_async(say, text, context_key, reply_thread_ts, meta=meta)
 
@@ -443,6 +450,8 @@ def _respond_async(say, question: str, context_key: str, reply_thread_ts: str = 
             _PENDING_MENU[context_key] = {"question": question,
                                           "log_id": out.get("log_id"),
                                           "spec": out.get("query")}
+            if ts:
+                _MSG_TO_LOG[ts] = out.get("log_id")     # map answer msg → log row for 👍/👎
             text = text + "\n" + _menu_footer()
         show(text)
 
@@ -491,6 +500,27 @@ def on_message(event, say):
         if _PENDING_MENU.get(thread_ts) or thread_store.get(thread_ts):
             meta = {"user": event.get("user"), "channel": event.get("channel")}
             _route(text, thread_ts, say, thread_ts, meta)
+
+
+@app.event("reaction_added")
+def on_reaction(event):
+    """Capture 👍/👎 emoji reactions on the bot's answers as feedback.
+    (Requires the `reactions:read` scope + the `reaction_added` event subscription.)"""
+    log_id = _MSG_TO_LOG.get((event.get("item") or {}).get("ts"))
+    if not log_id:
+        return
+    emoji = event.get("reaction", "")
+    if emoji in ("thumbsup", "+1", "white_check_mark", "heavy_check_mark"):
+        querylog.set_feedback(log_id, 1)
+    elif emoji in ("thumbsdown", "-1"):
+        querylog.set_feedback(log_id, -1)
+
+
+@app.event("reaction_removed")
+def on_reaction_removed(event):
+    log_id = _MSG_TO_LOG.get((event.get("item") or {}).get("ts"))
+    if log_id and event.get("reaction", "") in ("thumbsup", "+1", "thumbsdown", "-1"):
+        querylog.set_feedback(log_id, None)             # un-react = clear
 
 
 def _catchup_missed_dms():

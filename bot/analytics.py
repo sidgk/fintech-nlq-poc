@@ -52,6 +52,13 @@ def main():
         for question, n in errs:
             print(f"    {n:3}×  {question[:70]}")
 
+    menu = q("""SELECT kind, COUNT(*) FROM query_log WHERE kind LIKE 'menu:%'
+                GROUP BY kind ORDER BY 2 DESC""")
+    if menu:
+        print("\n• Follow-up option adoption (which option people pick most):")
+        for kind, n in menu:
+            print(f"    {kind.replace('menu:',''):14} {n}")
+
     up = q("SELECT COUNT(*) FROM query_log WHERE feedback=1")[0][0]
     down = q("SELECT COUNT(*) FROM query_log WHERE feedback=-1")[0][0]
     if up or down:
