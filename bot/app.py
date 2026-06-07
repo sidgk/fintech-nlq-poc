@@ -248,10 +248,12 @@ def handle_question(question: str, thread_ts: str) -> str:
     return text
 
 
-def _respond_async(say, question: str, thread_ts: str, waiting: str = None):
-    """Answer in a background thread so the Slack event is acked instantly
-    (no 3-second-timeout retries). Posts a placeholder, then edits it with the
-    result when the (sometimes slow) pipeline + Sheets work finishes."""
+def _respond_async(say, question: str, context_key: str, reply_thread_ts: str = None,
+                   waiting: str = None):
+    """Answer in a background thread (instant ack). `context_key` keys the
+    per-conversation memory + the Google Sheet. `reply_thread_ts` is where the
+    reply is shown: None = top level (DMs, so replies aren't hidden in threads);
+    a ts = threaded (channel mentions)."""
     if waiting is None:
         waiting = ":wave: Hang on, I'm working on it…"
         if _wants_chart(question):
@@ -260,7 +262,7 @@ def _respond_async(say, question: str, thread_ts: str, waiting: str = None):
     def work():
         placeholder = None
         try:
-            placeholder = say(text=waiting, thread_ts=thread_ts)
+            placeholder = say(text=waiting, thread_ts=reply_thread_ts)
         except Exception:
             pass
         ch = placeholder.get("channel") if placeholder else None
@@ -271,16 +273,16 @@ def _respond_async(say, question: str, thread_ts: str, waiting: str = None):
                 if ch and ts:
                     app.client.chat_update(channel=ch, ts=ts, text=t)
                 else:
-                    say(text=t, thread_ts=thread_ts)
+                    say(text=t, thread_ts=reply_thread_ts)
             except Exception:
                 try:
-                    say(text=t, thread_ts=thread_ts)
+                    say(text=t, thread_ts=reply_thread_ts)
                 except Exception:
                     pass
 
         # PHASE 1 — the answer (numbers), fast (~3-5s)
         try:
-            text, out = compute_answer(question, thread_ts)
+            text, out = compute_answer(question, context_key)
         except Exception as e:
             msg = str(e)
             key = os.environ.get("GEMINI_API_KEY", "")
@@ -295,7 +297,7 @@ def _respond_async(say, question: str, thread_ts: str, waiting: str = None):
         # PHASE 2 — Google Sheet + chart (slower), appended when ready
         if will_export:
             try:
-                status = export_to_sheet(thread_ts, question, out["rows"])
+                status = export_to_sheet(context_key, question, out["rows"])
                 show(text + "\n\n" + status)
             except Exception:
                 show(text)                        # keep the answer even if the sheet fails
@@ -310,10 +312,10 @@ def _strip_mentions(text: str) -> str:
 
 @app.event("app_mention")
 def on_mention(event, say):
-    # Fires for @mentions in CHANNELS (not DMs).
+    # Fires for @mentions in CHANNELS (not DMs). Reply threaded under the mention.
     question = _strip_mentions(event.get("text", ""))
     thread_ts = event.get("thread_ts") or event.get("ts")
-    _respond_async(say, question, thread_ts)
+    _respond_async(say, question, context_key=thread_ts, reply_thread_ts=thread_ts)
 
 
 @app.event("message")
@@ -325,11 +327,11 @@ def on_message(event, say):
     if not text:
         return
 
-    # DMs: ALWAYS handle here. Slack does NOT fire app_mention for DMs, so even a
-    # DM that @mentions the bot must be answered by this handler.
+    # DMs: ALWAYS handle here (Slack fires no app_mention for DMs). The whole DM
+    # is one conversation → reply at TOP LEVEL (visible, not hidden in a thread)
+    # and key memory on the DM channel so follow-ups share context.
     if event.get("channel_type") == "im":
-        thread_ts = event.get("thread_ts") or event.get("ts")
-        _respond_async(say, text, thread_ts)
+        _respond_async(say, text, context_key=event.get("channel"), reply_thread_ts=None)
         return
 
     # In a CHANNEL: if it @mentions the bot, app_mention already handles it.
@@ -337,12 +339,11 @@ def on_message(event, say):
         return
 
     # Mention-free follow-up inside a channel thread the bot already owns.
-    # (Requires the `message.channels` scope/event to be subscribed in Slack.)
     thread_ts = event.get("thread_ts")
     if thread_ts:
         import thread_store
         if thread_store.get(thread_ts):
-            _respond_async(say, text, thread_ts)
+            _respond_async(say, text, context_key=thread_ts, reply_thread_ts=thread_ts)
 
 
 def _catchup_missed_dms():
@@ -372,13 +373,14 @@ def _catchup_missed_dms():
             text = _strip_mentions(top.get("text", ""))
             if not text:
                 continue
-            thread_ts = top.get("thread_ts") or top.get("ts")
 
-            def say(t, thread_ts=thread_ts, _ch=ch):
-                return app.client.chat_postMessage(channel=_ch, text=t, thread_ts=thread_ts)
+            # Post top-level into this DM (param MUST be `text=` — that's how
+            # _respond_async calls say()). Bug before: it was `t`, so nothing posted.
+            def say(text=None, thread_ts=None, _ch=ch):
+                return app.client.chat_postMessage(channel=_ch, text=text, thread_ts=thread_ts)
 
             print(f"[catchup] answering missed DM: {text[:50]!r}", flush=True)
-            _respond_async(say, text, thread_ts,
+            _respond_async(say, text, context_key=ch, reply_thread_ts=None,
                            waiting=":wave: Sorry for the delay — catching up on this now…")
     except Exception as e:
         print(f"[catchup] error: {e}", flush=True)
