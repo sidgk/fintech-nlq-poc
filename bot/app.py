@@ -307,119 +307,94 @@ def handle_question(question: str, thread_ts: str) -> str:
     return text
 
 
-def _answer_blocks(text: str, log_id, question: str = None, offer_sheet: bool = False):
-    """Answer + 👍/👎 buttons, plus an on-demand 'Open in Google Sheet' button
-    (we build the sheet only if the user clicks it). Falls back to plain text
-    (None) if no log row or the answer is too long for a Slack section block."""
-    if not log_id or len(text) > 2900:
-        return None
-    blocks = [
-        {"type": "section", "text": {"type": "mrkdwn", "text": text}},
-        {"type": "actions", "block_id": "feedback", "elements": [
-            {"type": "button", "text": {"type": "plain_text", "text": "👍 Helpful"},
-             "action_id": "fb_up", "value": str(log_id)},
-            {"type": "button", "text": {"type": "plain_text", "text": "👎 Not quite"},
-             "action_id": "fb_down", "value": str(log_id)},
-        ]},
-    ]
-    if offer_sheet and question:
-        label = "📊 Open chart in Google Sheet" if _wants_chart(question) else "📊 Open in Google Sheet"
-        blocks.append({"type": "actions", "block_id": "sheet", "elements": [
-            {"type": "button", "text": {"type": "plain_text", "text": label},
-             "action_id": "view_sheet", "value": question[:1900]},
-        ]})
-    return blocks
+# ── Follow-up menu (numbered options — works WITHOUT Slack interactivity) ─────
+_PENDING_MENU = {}   # context_key -> {question, log_id, spec}
 
 
-def _record_feedback(body, action, value):
-    """Persist 👍/👎 and swap the buttons for a 'thanks' note so it can't double-vote."""
-    try:
-        querylog.set_feedback(int(action.get("value")), value)
-    except Exception:
-        pass
-    try:
-        msg = body.get("message", {})
-        # remove ONLY the feedback buttons; keep the 'Open in Google Sheet' button
-        blocks = [b for b in msg.get("blocks", []) if b.get("block_id") != "feedback"]
-        note = "✅ Thanks for the feedback!" if value == 1 else \
-               "🙏 Thanks — noted. I'll use this to improve."
-        blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": note}]})
-        app.client.chat_update(channel=body["channel"]["id"], ts=msg["ts"],
-                               text=msg.get("text", ""), blocks=blocks)
-    except Exception:
-        pass
+def _menu_footer() -> str:
+    lines = ["", "_What next? Just reply with a number:_"]
+    if _sheets_ready():
+        lines.append("`1` 📊 See the numbers in Google Sheets")
+        lines.append("`2` 📈 Visualize it (chart) in Google Sheets")
+    lines.append("`3` 🧬 How was this calculated?")
+    lines.append("`4` 👍 Helpful   ·   `5` 👎 Not quite")
+    return "\n".join(lines)
 
 
-@app.action("fb_up")
-def _fb_up(ack, body, action):
-    ack()
-    _record_feedback(body, action, 1)
+def _parse_choice(text: str):
+    """Return 1-5 if the message is just a menu pick ('2', 'option 2', '2.')."""
+    m = re.match(r"^\s*(option\s*)?([1-5])\s*[.)]?\s*$", (text or "").lower())
+    return int(m.group(2)) if m else None
 
 
-@app.action("fb_down")
-def _fb_down(ack, body, action):
-    ack()
-    _record_feedback(body, action, -1)
-
-
-def _get_or_create_sheet(question: str, rows: list) -> str:
-    """Reuse the cached Google Sheet for this question, or build it once (and
-    share it so any user can open it). Same question → same sheet, for everyone."""
-    cached = querylog.sheet_cache_get(question)
+def _get_or_create_sheet(question: str, rows: list, want_chart: bool) -> str:
+    """Reuse the cached Google Sheet for this question (+ chart variant), or build
+    it once and share it. Same question → same sheet, for everyone."""
+    cache_key = question + ("::chart" if want_chart else "::plain")
+    cached = querylog.sheet_cache_get(cache_key)
     if cached:
         return cached["url"]
     import sheets
     sid, url, tab = sheets.create_spreadsheet(question, question, rows)
-    if _wants_chart(question):
+    if want_chart:
         try:
             sheets.add_chart(sid, tab, with_trend=_wants_trend(question))
         except Exception:
             pass
     try:
-        sheets.share_anyone(sid)                   # any Slack user who clicks can view
+        sheets.share_anyone(sid)                   # any user who opens the link can view
     except Exception:
         pass
-    querylog.sheet_cache_put(question, sid, url)
+    querylog.sheet_cache_put(cache_key, sid, url)
     return url
 
 
-def _build_sheet_and_reply(body, action):
-    question = action.get("value") or ""
-    channel = body.get("channel", {}).get("id")
-    thread_ts = (body.get("message") or {}).get("thread_ts")
-    ph = None
+def _menu_sheet(question, want_chart, say, reply_thread_ts):
     try:
-        ph = app.client.chat_postMessage(channel=channel, thread_ts=thread_ts,
-                                         text=":bar_chart: one sec — preparing your Google Sheet…")
-    except Exception:
-        pass
-
-    def update(t):
-        try:
-            if ph and ph.get("ts"):
-                app.client.chat_update(channel=channel, ts=ph["ts"], text=t)
-            else:
-                app.client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=t)
-        except Exception:
-            pass
-
-    try:
+        say(text=":bar_chart: one sec — preparing your Google Sheet…", thread_ts=reply_thread_ts)
         cached = querylog.cache_get(question)
         rows = cached["rows"] if (cached and cached.get("rows")) else \
             answer_question(question).get("rows", [])
         if not rows:
-            update(":warning: there's no data to put in a sheet for that one.")
+            say(text=":warning: there's no data to put in a sheet for that one.",
+                thread_ts=reply_thread_ts)
             return
-        url = _get_or_create_sheet(question, rows)
-        update(f":bar_chart: <{url}|Open in Google Sheet>")
+        url = _get_or_create_sheet(question, rows, want_chart)
+        say(text=f":bar_chart: <{url}|Open in Google Sheet>", thread_ts=reply_thread_ts)
     except Exception as e:
-        update(f":warning: couldn't build the sheet: {e}")
+        say(text=f":warning: couldn't build the sheet: {e}", thread_ts=reply_thread_ts)
 
 
-@app.action("view_sheet")
-def _view_sheet(ack, body, action):
-    ack()                                          # ack the click instantly
-    threading.Thread(target=_build_sheet_and_reply, args=(body, action), daemon=True).start()
+def _handle_menu(choice, pending, say, reply_thread_ts):
+    """Run the action the user selected from the numbered menu."""
+    question = pending.get("question", "")
+    if choice in (1, 2):                                   # 1 = numbers, 2 = chart
+        threading.Thread(target=_menu_sheet,
+                         args=(question, choice == 2, say, reply_thread_ts), daemon=True).start()
+    elif choice == 3:                                      # lineage
+        spec = pending.get("spec")
+        if not spec:
+            say(text="I don't have a calculation to explain for that.", thread_ts=reply_thread_ts)
+            return
+        try:
+            import lineage
+            say(text=lineage.explain(spec), thread_ts=reply_thread_ts)
+        except Exception as e:
+            say(text=f":warning: couldn't build the lineage: {e}", thread_ts=reply_thread_ts)
+    elif choice in (4, 5):                                 # 4 = 👍, 5 = 👎
+        querylog.set_feedback(pending.get("log_id"), 1 if choice == 4 else -1)
+        say(text="✅ Thanks — glad it helped!" if choice == 4
+                 else "🙏 Thanks — noted, I'll use this to improve.", thread_ts=reply_thread_ts)
+
+
+def _route(text, context_key, say, reply_thread_ts, meta):
+    """Menu pick for the last answer, or a brand-new question."""
+    choice = _parse_choice(text)
+    pending = _PENDING_MENU.get(context_key)
+    if choice and pending:
+        _handle_menu(choice, pending, say, reply_thread_ts)
+        return
+    _respond_async(say, text, context_key, reply_thread_ts, meta=meta)
 
 
 def _respond_async(say, question: str, context_key: str, reply_thread_ts: str = None,
@@ -440,21 +415,20 @@ def _respond_async(say, question: str, context_key: str, reply_thread_ts: str = 
         ch = placeholder.get("channel") if placeholder else None
         ts = placeholder.get("ts") if placeholder else None
 
-        def show(t, log_id=None, offer_sheet=False):
-            blocks = _answer_blocks(t, log_id, question, offer_sheet)
+        def show(t):
             try:
                 if ch and ts:
-                    app.client.chat_update(channel=ch, ts=ts, text=t, blocks=blocks)
+                    app.client.chat_update(channel=ch, ts=ts, text=t)
                 else:
-                    say(text=t, thread_ts=reply_thread_ts, blocks=blocks)
+                    say(text=t, thread_ts=reply_thread_ts)
             except Exception:
                 try:
                     say(text=t, thread_ts=reply_thread_ts)
                 except Exception:
                     pass
 
-        # Compute + show the numbers. The Google Sheet is built ONLY if the user
-        # clicks the button (no wasted work, and identical questions reuse one sheet).
+        # Compute + show the numbers, then a numbered menu. The Google Sheet is
+        # built ONLY if the user picks 1/2 (no wasted work; one sheet per question).
         try:
             text, out = compute_answer(question, context_key, meta)
         except Exception as e:
@@ -465,9 +439,12 @@ def _respond_async(say, question: str, context_key: str, reply_thread_ts: str = 
             show(f":warning: sorry, that failed: {msg}")
             return
 
-        log_id = out.get("log_id") if out else None
-        offer_sheet = bool(out and _sheets_ready() and out.get("rows"))
-        show(text, log_id=log_id, offer_sheet=offer_sheet)
+        if out and out.get("rows") is not None and "error" not in (out or {}):
+            _PENDING_MENU[context_key] = {"question": question,
+                                          "log_id": out.get("log_id"),
+                                          "spec": out.get("query")}
+            text = text + "\n" + _menu_footer()
+        show(text)
 
     threading.Thread(target=work, daemon=True).start()
 
@@ -483,7 +460,7 @@ def on_mention(event, say):
     question = _strip_mentions(event.get("text", ""))
     thread_ts = event.get("thread_ts") or event.get("ts")
     meta = {"user": event.get("user"), "channel": event.get("channel")}
-    _respond_async(say, question, context_key=thread_ts, reply_thread_ts=thread_ts, meta=meta)
+    _route(question, thread_ts, say, thread_ts, meta)
 
 
 @app.event("message")
@@ -500,7 +477,7 @@ def on_message(event, say):
     # and key memory on the DM channel so follow-ups share context.
     if event.get("channel_type") == "im":
         meta = {"user": event.get("user"), "channel": event.get("channel")}
-        _respond_async(say, text, context_key=event.get("channel"), reply_thread_ts=None, meta=meta)
+        _route(text, event.get("channel"), say, None, meta)
         return
 
     # In a CHANNEL: if it @mentions the bot, app_mention already handles it.
@@ -511,9 +488,9 @@ def on_message(event, say):
     thread_ts = event.get("thread_ts")
     if thread_ts:
         import thread_store
-        if thread_store.get(thread_ts):
+        if _PENDING_MENU.get(thread_ts) or thread_store.get(thread_ts):
             meta = {"user": event.get("user"), "channel": event.get("channel")}
-            _respond_async(say, text, context_key=thread_ts, reply_thread_ts=thread_ts, meta=meta)
+            _route(text, thread_ts, say, thread_ts, meta)
 
 
 def _catchup_missed_dms():
