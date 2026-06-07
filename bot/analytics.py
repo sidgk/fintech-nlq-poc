@@ -52,6 +52,17 @@ def main():
         for question, n in errs:
             print(f"    {n:3}×  {question[:70]}")
 
+    up = q("SELECT COUNT(*) FROM query_log WHERE feedback=1")[0][0]
+    down = q("SELECT COUNT(*) FROM query_log WHERE feedback=-1")[0][0]
+    if up or down:
+        print(f"\n• Feedback: 👍 {up}   👎 {down}"
+              + (f"   ({100*up/(up+down):.0f}% positive)" if (up + down) else ""))
+        bad = q("SELECT question FROM query_log WHERE feedback=-1 ORDER BY ts DESC LIMIT 10")
+        if bad:
+            print("    👎 answers to review (improve the metric or prompt):")
+            for (question,) in bad:
+                print(f"        {(question or '')[:65]}")
+
     print("\n• 10 most recent:")
     for created, user, kind, hit, q_text in q("""SELECT created_at, user_id, kind, cache_hit, question
                                                  FROM query_log ORDER BY ts DESC LIMIT 10"""):

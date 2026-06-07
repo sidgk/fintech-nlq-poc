@@ -47,6 +47,11 @@ def init():
             query_spec TEXT, rows_json TEXT, row_count INTEGER, created_ts REAL)""")
         c.execute("CREATE INDEX IF NOT EXISTS idx_log_norm ON query_log(normalized)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_log_ts ON query_log(ts)")
+        # migration: add feedback column to existing DBs (1=👍, -1=👎, NULL=none)
+        try:
+            c.execute("ALTER TABLE query_log ADD COLUMN feedback INTEGER")
+        except Exception:
+            pass
 
 
 def normalize(q: str) -> str:
@@ -90,9 +95,10 @@ def cache_put(question, answer, spec, rows):
 
 
 def log(user_id, channel, question, kind, spec, row_count, answer, cache_hit, latency_ms, model):
+    """Insert a log row; returns its id (used to attach 👍/👎 feedback)."""
     try:
         with _conn() as c:
-            c.execute("""INSERT INTO query_log
+            cur = c.execute("""INSERT INTO query_log
                 (ts, created_at, user_id, channel, question, normalized, kind,
                  query_spec, row_count, answer, cache_hit, latency_ms, model)
                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
@@ -100,6 +106,16 @@ def log(user_id, channel, question, kind, spec, row_count, answer, cache_hit, la
                  user_id, channel, question, normalize(question), kind,
                  json.dumps(spec) if spec else None, row_count or 0,
                  (answer or "")[:4000], int(bool(cache_hit)), latency_ms, model))
+            return cur.lastrowid
+    except Exception:
+        return None
+
+
+def set_feedback(log_id, value):
+    """value: 1 for 👍, -1 for 👎."""
+    try:
+        with _conn() as c:
+            c.execute("UPDATE query_log SET feedback=? WHERE id=?", (value, log_id))
     except Exception:
         pass
 

@@ -231,7 +231,7 @@ def _finish_uncached(question, context_key, out, _log):
         _LAST_QUERY[context_key] = out["query"]   # for a follow-up lineage ask
         _LAST_QUESTION[context_key] = question
     ans = format_reply(question, out)
-    _log("data", out.get("query"), len(out.get("rows", [])), ans, False)
+    out["log_id"] = _log("data", out.get("query"), len(out.get("rows", [])), ans, False)
     return ans, out
 
 
@@ -243,14 +243,14 @@ def compute_answer(question: str, context_key: str, meta: dict = None):
     t0 = time.time()
 
     def _log(kind, spec, rc, answer, cache_hit):
-        querylog.log(meta.get("user"), meta.get("channel"), question, kind, spec,
-                     rc, answer, cache_hit, int((time.time() - t0) * 1000), _model_name())
+        return querylog.log(meta.get("user"), meta.get("channel"), question, kind, spec,
+                            rc, answer, cache_hit, int((time.time() - t0) * 1000), _model_name())
 
     def _from_cache(c):
         _LAST_QUERY[context_key] = c["spec"]
         _LAST_QUESTION[context_key] = question
-        _log("data", c["spec"], c["row_count"], c["answer"], True)
-        return c["answer"], {"query": c["spec"], "rows": c["rows"], "cached": True}
+        log_id = _log("data", c["spec"], c["row_count"], c["answer"], True)
+        return c["answer"], {"query": c["spec"], "rows": c["rows"], "cached": True, "log_id": log_id}
 
     # Lineage — depends on thread state, not cacheable.
     if _wants_lineage(question, context_key):
@@ -307,6 +307,52 @@ def handle_question(question: str, thread_ts: str) -> str:
     return text
 
 
+def _feedback_blocks(text: str, log_id):
+    """Render the answer with 👍/👎 buttons. Falls back to plain text (None) if
+    there's no log row or the answer is too long for a Slack section block."""
+    if not log_id or len(text) > 2900:
+        return None
+    return [
+        {"type": "section", "text": {"type": "mrkdwn", "text": text}},
+        {"type": "actions", "block_id": "feedback", "elements": [
+            {"type": "button", "text": {"type": "plain_text", "text": "👍 Helpful"},
+             "action_id": "fb_up", "value": str(log_id)},
+            {"type": "button", "text": {"type": "plain_text", "text": "👎 Not quite"},
+             "action_id": "fb_down", "value": str(log_id)},
+        ]},
+    ]
+
+
+def _record_feedback(body, action, value):
+    """Persist 👍/👎 and swap the buttons for a 'thanks' note so it can't double-vote."""
+    try:
+        querylog.set_feedback(int(action.get("value")), value)
+    except Exception:
+        pass
+    try:
+        msg = body.get("message", {})
+        blocks = [b for b in msg.get("blocks", []) if b.get("type") != "actions"]
+        note = "✅ Thanks for the feedback!" if value == 1 else \
+               "🙏 Thanks — noted. I'll use this to improve."
+        blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": note}]})
+        app.client.chat_update(channel=body["channel"]["id"], ts=msg["ts"],
+                               text=msg.get("text", ""), blocks=blocks)
+    except Exception:
+        pass
+
+
+@app.action("fb_up")
+def _fb_up(ack, body, action):
+    ack()
+    _record_feedback(body, action, 1)
+
+
+@app.action("fb_down")
+def _fb_down(ack, body, action):
+    ack()
+    _record_feedback(body, action, -1)
+
+
 def _respond_async(say, question: str, context_key: str, reply_thread_ts: str = None,
                    waiting: str = None, meta: dict = None):
     """Answer in a background thread (instant ack). `context_key` keys the
@@ -327,12 +373,13 @@ def _respond_async(say, question: str, context_key: str, reply_thread_ts: str = 
         ch = placeholder.get("channel") if placeholder else None
         ts = placeholder.get("ts") if placeholder else None
 
-        def show(t):
+        def show(t, log_id=None):
+            blocks = _feedback_blocks(t, log_id)  # adds 👍/👎 when log_id is set
             try:
                 if ch and ts:
-                    app.client.chat_update(channel=ch, ts=ts, text=t)
+                    app.client.chat_update(channel=ch, ts=ts, text=t, blocks=blocks)
                 else:
-                    say(text=t, thread_ts=reply_thread_ts)
+                    say(text=t, thread_ts=reply_thread_ts, blocks=blocks)
             except Exception:
                 try:
                     say(text=t, thread_ts=reply_thread_ts)
@@ -350,16 +397,19 @@ def _respond_async(say, question: str, context_key: str, reply_thread_ts: str = 
             show(f":warning: sorry, that failed: {msg}")
             return
 
+        log_id = out.get("log_id") if out else None
         will_export = bool(out and _sheets_ready() and out.get("rows"))
-        show(text + ("\n\n_:bar_chart: building your Google Sheet…_" if will_export else ""))
 
-        # PHASE 2 — Google Sheet + chart (slower), appended when ready
+        # PHASE 2 — Google Sheet + chart (slower). Buttons go on the FINAL message.
         if will_export:
+            show(text + "\n\n_:bar_chart: building your Google Sheet…_")   # interim, no buttons
             try:
                 status = export_to_sheet(context_key, question, out["rows"])
-                show(text + "\n\n" + status)
+                show(text + "\n\n" + status, log_id=log_id)
             except Exception:
-                show(text)                        # keep the answer even if the sheet fails
+                show(text, log_id=log_id)
+        else:
+            show(text, log_id=log_id)
 
     threading.Thread(target=work, daemon=True).start()
 
