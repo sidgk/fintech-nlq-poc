@@ -12,7 +12,12 @@ import sys
 import threading
 
 from slack_bolt import App
-from slack_bolt.adapter.socket_mode import SocketModeHandler
+# Prefer the websocket-client-based handler (ping/pong heartbeat + auto-reconnect)
+# over the fragile pure-Python builtin one that went silently deaf on BrokenPipe.
+try:
+    from slack_bolt.adapter.socket_mode.websocket_client import SocketModeHandler
+except Exception:
+    from slack_bolt.adapter.socket_mode import SocketModeHandler
 
 from resolver import answer_question, classify_intent, is_lineage
 
@@ -243,13 +248,14 @@ def handle_question(question: str, thread_ts: str) -> str:
     return text
 
 
-def _respond_async(say, question: str, thread_ts: str):
+def _respond_async(say, question: str, thread_ts: str, waiting: str = None):
     """Answer in a background thread so the Slack event is acked instantly
     (no 3-second-timeout retries). Posts a placeholder, then edits it with the
     result when the (sometimes slow) pipeline + Sheets work finishes."""
-    waiting = ":wave: Hang on, I'm working on it…"
-    if _wants_chart(question):
-        waiting = ":wave: Hang on, I'm working on it — crunching the numbers and drawing your chart… :bar_chart:"
+    if waiting is None:
+        waiting = ":wave: Hang on, I'm working on it…"
+        if _wants_chart(question):
+            waiting = ":wave: Hang on, I'm working on it — crunching the numbers and drawing your chart… :bar_chart:"
 
     def work():
         placeholder = None
@@ -339,6 +345,45 @@ def on_message(event, say):
             _respond_async(say, text, thread_ts)
 
 
+def _catchup_missed_dms():
+    """On startup, answer any DM the bot missed while it was disconnected. Uses
+    only the im:history scope we already have. Naturally idempotent: once we
+    reply (in-thread), the message has a reply, so we won't answer it twice."""
+    import time as _t
+    _t.sleep(6)                                     # let the connection settle
+    try:
+        cutoff = _t.time() - 2 * 3600               # only the last 2 hours
+        ims = app.client.conversations_list(types="im", limit=50).get("channels", [])
+        for im in ims:
+            ch = im.get("id")
+            try:
+                msgs = app.client.conversations_history(channel=ch, limit=5).get("messages", [])
+            except Exception:
+                continue
+            if not msgs:
+                continue
+            top = msgs[0]                            # newest message in this DM
+            if top.get("bot_id") or top.get("user") == BOT_USER_ID:
+                continue                             # bot spoke last → nothing pending
+            if top.get("reply_count"):
+                continue                             # already has a reply → answered
+            if float(top.get("ts", 0)) < cutoff:
+                continue                             # too old to bother
+            text = _strip_mentions(top.get("text", ""))
+            if not text:
+                continue
+            thread_ts = top.get("thread_ts") or top.get("ts")
+
+            def say(t, thread_ts=thread_ts, _ch=ch):
+                return app.client.chat_postMessage(channel=_ch, text=t, thread_ts=thread_ts)
+
+            print(f"[catchup] answering missed DM: {text[:50]!r}", flush=True)
+            _respond_async(say, text, thread_ts,
+                           waiting=":wave: Sorry for the delay — catching up on this now…")
+    except Exception as e:
+        print(f"[catchup] error: {e}", flush=True)
+
+
 if __name__ == "__main__":
     # Pre-warm the local model so the FIRST Slack question is fast (with
     # keep_alive=-1 in the resolver, it then stays pinned in RAM).
@@ -369,4 +414,6 @@ if __name__ == "__main__":
                 os._exit(1)
 
     threading.Thread(target=_watchdog, daemon=True).start()
+    # Catch up on any DM missed while we were disconnected/restarting.
+    threading.Thread(target=_catchup_missed_dms, daemon=True).start()
     handler.start()
