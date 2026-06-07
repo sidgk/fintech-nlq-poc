@@ -330,6 +330,25 @@ def _parse_choice(text: str):
     return int(m.group(2)) if m else None
 
 
+def _feedback_sentiment(text: str) -> str:
+    """Light classification so the acknowledgment fits the feedback (and for analytics)."""
+    t = (text or "").lower()
+    pos = ("good", "great", "perfect", "thank", "helpful", "nice", "love", "correct",
+           "accurate", "satisfied", "excellent", "awesome", "works", "spot on",
+           "exactly", "well done", "clear", "👍")
+    neg = ("wrong", "incorrect", "too high", "too low", "not right", "bad", "error",
+           "issue", "problem", "doesn't", "does not", "confusing", "missing", "fix",
+           "broken", "inaccurate", "not correct", "should be", "mistake", "👎")
+    has_pos, has_neg = any(w in t for w in pos), any(w in t for w in neg)
+    if has_pos and has_neg:
+        return "mixed"
+    if has_neg:
+        return "negative"
+    if has_pos:
+        return "positive"
+    return "neutral"
+
+
 def _get_or_create_sheet(question: str, rows: list, want_chart: bool) -> str:
     """Reuse the cached Google Sheet for this question (+ chart variant), or build
     it once and share it. Same question → same sheet, for everyone."""
@@ -408,10 +427,17 @@ def _route(text, context_key, say, reply_thread_ts, meta):
     # 1) Were we waiting for free-text feedback in this conversation?
     fb = _AWAITING_FEEDBACK.pop(context_key, None)
     if fb is not None:
+        sentiment = _feedback_sentiment(text)
         querylog.add_feedback_text(m.get("user"), m.get("channel"), fb.get("question"),
-                                   fb.get("answer"), fb.get("spec"), fb.get("log_id"), text)
-        say(text="🙏 Thank you! I've logged your feedback — we'll work on it.",
-            thread_ts=reply_thread_ts)
+                                   fb.get("answer"), fb.get("spec"), fb.get("log_id"),
+                                   text, sentiment)
+        if sentiment == "positive":
+            ack = "🙏 Thank you! Glad it was helpful — noted. 😊"
+        elif sentiment in ("negative", "mixed"):
+            ack = "🙏 Thanks for flagging that — logged, and we'll work on it."
+        else:
+            ack = "🙏 Thanks! I've logged your feedback."
+        say(text=ack, thread_ts=reply_thread_ts)
         return
 
     # 2) A numbered menu pick for the last answer?

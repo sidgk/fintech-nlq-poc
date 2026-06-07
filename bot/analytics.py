@@ -70,12 +70,14 @@ def main():
             for (question,) in bad:
                 print(f"        {(question or '')[:65]}")
 
-    fb_text = q("SELECT created_at, question, feedback FROM feedback ORDER BY ts DESC LIMIT 15")
+    fb_text = q("SELECT created_at, question, feedback, sentiment FROM feedback ORDER BY ts DESC LIMIT 15")
     if fb_text:
-        print("\n• 💬 Free-text feedback (most recent — work on these):")
-        for created, question, fbtext in fb_text:
-            print(f"    [{created}]  Q: {(question or '')[:50]}")
-            print(f"               ↳ {(fbtext or '')[:90]}")
+        sent = q("SELECT COALESCE(sentiment,'?'), COUNT(*) FROM feedback GROUP BY sentiment ORDER BY 2 DESC")
+        print("\n• 💬 Free-text feedback  (" + ", ".join(f"{s}: {n}" for s, n in sent) + ")")
+        for created, question, fbtext, sentiment in fb_text:
+            tag = {"positive": "🟢", "negative": "🔴", "mixed": "🟡"}.get(sentiment, "⚪")
+            print(f"    {tag} [{created}]  Q: {(question or '')[:46]}")
+            print(f"               ↳ {(fbtext or '')[:88]}")
 
     print("\n• 10 most recent:")
     for created, user, kind, hit, q_text in q("""SELECT created_at, user_id, kind, cache_hit, question
