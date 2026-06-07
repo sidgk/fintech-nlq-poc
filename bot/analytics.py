@@ -70,6 +70,13 @@ def main():
             for (question,) in bad:
                 print(f"        {(question or '')[:65]}")
 
+    fb_text = q("SELECT created_at, question, feedback FROM feedback ORDER BY ts DESC LIMIT 15")
+    if fb_text:
+        print("\n• 💬 Free-text feedback (most recent — work on these):")
+        for created, question, fbtext in fb_text:
+            print(f"    [{created}]  Q: {(question or '')[:50]}")
+            print(f"               ↳ {(fbtext or '')[:90]}")
+
     print("\n• 10 most recent:")
     for created, user, kind, hit, q_text in q("""SELECT created_at, user_id, kind, cache_hit, question
                                                  FROM query_log ORDER BY ts DESC LIMIT 10"""):

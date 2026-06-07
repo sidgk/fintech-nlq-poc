@@ -308,9 +308,10 @@ def handle_question(question: str, thread_ts: str) -> str:
 
 
 # ── Follow-up menu (numbered options — works WITHOUT Slack interactivity) ─────
-_PENDING_MENU = {}   # context_key -> {question, log_id, spec}
-_MSG_TO_LOG = {}     # answer message ts -> query_log id (for 👍/👎 emoji reactions)
-_MENU_LABEL = {1: "sheet_numbers", 2: "sheet_chart", 3: "lineage"}
+_PENDING_MENU = {}      # context_key -> {question, answer, log_id, spec}
+_AWAITING_FEEDBACK = {}  # context_key -> {question, answer, spec, log_id}; next msg = feedback
+_MSG_TO_LOG = {}        # answer message ts -> query_log id (for 👍/👎 emoji reactions)
+_MENU_LABEL = {1: "sheet_numbers", 2: "sheet_chart", 3: "lineage", 4: "feedback"}
 
 
 def _menu_footer() -> str:
@@ -319,13 +320,13 @@ def _menu_footer() -> str:
         lines.append("`1` 📊 Numbers in Google Sheets")
         lines.append("`2` 📈 Chart in Google Sheets")
     lines.append("`3` 🧬 How was this calculated?")
-    lines.append("_…or react 👍 / 👎 to rate this answer._")
+    lines.append("`4` 💬 Leave feedback")
     return "\n".join(lines)
 
 
 def _parse_choice(text: str):
-    """Return 1-3 if the message is just a menu pick ('2', 'option 2', '2.')."""
-    m = re.match(r"^\s*(option\s*)?([1-3])\s*[.)]?\s*$", (text or "").lower())
+    """Return 1-4 if the message is just a menu pick ('2', 'option 2', '2.')."""
+    m = re.match(r"^\s*(option\s*)?([1-4])\s*[.)]?\s*$", (text or "").lower())
     return int(m.group(2)) if m else None
 
 
@@ -367,7 +368,7 @@ def _menu_sheet(question, want_chart, say, reply_thread_ts):
         say(text=f":warning: couldn't build the sheet: {e}", thread_ts=reply_thread_ts)
 
 
-def _handle_menu(choice, pending, say, reply_thread_ts, meta=None):
+def _handle_menu(choice, pending, say, reply_thread_ts, meta=None, context_key=None):
     """Run the action the user selected — and LOG the pick (so analytics show the
     most-adopted option per question)."""
     question = pending.get("question", "")
@@ -392,15 +393,35 @@ def _handle_menu(choice, pending, say, reply_thread_ts, meta=None):
             say(text=lineage.explain(spec), thread_ts=reply_thread_ts)
         except Exception as e:
             say(text=f":warning: couldn't build the lineage: {e}", thread_ts=reply_thread_ts)
+    elif choice == 4:                                      # leave free-text feedback
+        _AWAITING_FEEDBACK[context_key] = {
+            "question": question, "answer": pending.get("answer"),
+            "spec": pending.get("spec"), "log_id": pending.get("log_id")}
+        say(text="💬 Sure — what's your feedback on this answer? Just type it in your next message.",
+            thread_ts=reply_thread_ts)
 
 
 def _route(text, context_key, say, reply_thread_ts, meta):
-    """Menu pick for the last answer, or a brand-new question."""
+    """Capture pending feedback → else a menu pick → else a brand-new question."""
+    m = meta or {}
+
+    # 1) Were we waiting for free-text feedback in this conversation?
+    fb = _AWAITING_FEEDBACK.pop(context_key, None)
+    if fb is not None:
+        querylog.add_feedback_text(m.get("user"), m.get("channel"), fb.get("question"),
+                                   fb.get("answer"), fb.get("spec"), fb.get("log_id"), text)
+        say(text="🙏 Thank you! I've logged your feedback — we'll work on it.",
+            thread_ts=reply_thread_ts)
+        return
+
+    # 2) A numbered menu pick for the last answer?
     choice = _parse_choice(text)
     pending = _PENDING_MENU.get(context_key)
     if choice and pending:
-        _handle_menu(choice, pending, say, reply_thread_ts, meta)
+        _handle_menu(choice, pending, say, reply_thread_ts, meta, context_key)
         return
+
+    # 3) A brand-new question.
     _respond_async(say, text, context_key, reply_thread_ts, meta=meta)
 
 
@@ -448,6 +469,7 @@ def _respond_async(say, question: str, context_key: str, reply_thread_ts: str = 
 
         if out and out.get("rows") is not None and "error" not in (out or {}):
             _PENDING_MENU[context_key] = {"question": question,
+                                          "answer": text,         # before the footer
                                           "log_id": out.get("log_id"),
                                           "spec": out.get("query")}
             if ts:

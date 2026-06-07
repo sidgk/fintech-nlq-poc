@@ -49,6 +49,11 @@ def init():
         c.execute("""CREATE TABLE IF NOT EXISTS sheet_cache(
             normalized TEXT PRIMARY KEY, question TEXT, spreadsheet_id TEXT,
             url TEXT, created_ts REAL)""")
+        # free-text user feedback, tied to the exact question + answer
+        c.execute("""CREATE TABLE IF NOT EXISTS feedback(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts REAL, created_at TEXT, user_id TEXT, channel TEXT,
+            question TEXT, answer TEXT, query_spec TEXT, log_id INTEGER, feedback TEXT)""")
         c.execute("CREATE INDEX IF NOT EXISTS idx_log_norm ON query_log(normalized)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_log_ts ON query_log(ts)")
         # migration: add feedback column to existing DBs (1=👍, -1=👎, NULL=none)
@@ -120,6 +125,20 @@ def set_feedback(log_id, value):
     try:
         with _conn() as c:
             c.execute("UPDATE query_log SET feedback=? WHERE id=?", (value, log_id))
+    except Exception:
+        pass
+
+
+def add_feedback_text(user_id, channel, question, answer, spec, log_id, feedback):
+    """Store a free-text feedback note against the question + answer it's about."""
+    try:
+        with _conn() as c:
+            c.execute("""INSERT INTO feedback
+                (ts, created_at, user_id, channel, question, answer, query_spec, log_id, feedback)
+                VALUES(?,?,?,?,?,?,?,?,?)""",
+                (time.time(), datetime.datetime.now().isoformat(timespec="seconds"),
+                 user_id, channel, question, (answer or "")[:4000],
+                 json.dumps(spec) if spec else None, log_id, (feedback or "")[:4000]))
     except Exception:
         pass
 
