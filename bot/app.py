@@ -9,7 +9,10 @@ It calls the resolver and replies with the number + the resolved query.
 import os
 import re
 import sys
+import time
 import threading
+
+import querylog
 
 from slack_bolt import App
 # Prefer the websocket-client-based handler (ping/pong heartbeat + auto-reconnect)
@@ -206,34 +209,90 @@ def _wants_lineage(text: str, thread_ts: str) -> bool:
     return False
 
 
-def compute_answer(question: str, thread_ts: str):
-    """FAST path: returns (reply_text, out). Does NOT touch Google Sheets — so
-    the numbers reach the user in a few seconds. Sheet/chart happens separately."""
-    # Lineage question about the thread's last metric — explain, don't re-query.
-    if _wants_lineage(question, thread_ts):
+def _model_name() -> str:
+    p = os.environ.get("LLM_PROVIDER", "").lower()
+    if p == "ollama":
+        return os.environ.get("OLLAMA_MODEL", "ollama")
+    if p == "anthropic":
+        return os.environ.get("CLAUDE_MODEL", "claude")
+    return os.environ.get("GEMINI_MODEL", "gemini")
+
+
+def _finish_uncached(question, context_key, out, _log):
+    """Format + log a freshly-computed result. Returns (text, out)."""
+    if out.get("chat"):                           # greeting / small talk / unclear
+        _log("chat", None, 0, out["chat"], False)
+        return out["chat"], None
+    if "error" in out and "rows" not in out:
+        ans = format_reply(question, out)
+        _log("error", out.get("query"), 0, ans, False)
+        return ans, out
+    if out.get("query"):
+        _LAST_QUERY[context_key] = out["query"]   # for a follow-up lineage ask
+        _LAST_QUESTION[context_key] = question
+    ans = format_reply(question, out)
+    _log("data", out.get("query"), len(out.get("rows", [])), ans, False)
+    return ans, out
+
+
+def compute_answer(question: str, context_key: str, meta: dict = None):
+    """FAST path: returns (reply_text, out). Caches standalone data questions
+    (compute once → serve everyone) and logs every interaction. Does NOT touch
+    Google Sheets — numbers reach the user in seconds; the sheet follows."""
+    meta = meta or {}
+    t0 = time.time()
+
+    def _log(kind, spec, rc, answer, cache_hit):
+        querylog.log(meta.get("user"), meta.get("channel"), question, kind, spec,
+                     rc, answer, cache_hit, int((time.time() - t0) * 1000), _model_name())
+
+    def _from_cache(c):
+        _LAST_QUERY[context_key] = c["spec"]
+        _LAST_QUESTION[context_key] = question
+        _log("data", c["spec"], c["row_count"], c["answer"], True)
+        return c["answer"], {"query": c["spec"], "rows": c["rows"], "cached": True}
+
+    # Lineage — depends on thread state, not cacheable.
+    if _wants_lineage(question, context_key):
         try:
             import lineage
-            return lineage.explain(_LAST_QUERY[thread_ts]), None
+            ans = lineage.explain(_LAST_QUERY[context_key])
         except Exception as e:
-            return f":warning: couldn't build the lineage: {e}", None
+            ans = f":warning: couldn't build the lineage: {e}"
+        _log("lineage", None, 0, ans, False)
+        return ans, None
 
-    # Contextual follow-up ("the same per quarter", "those again").
-    q_for_resolver = question
-    prev = _LAST_QUESTION.get(thread_ts)
+    # Contextual follow-up ("the same per quarter") — depends on thread, not cacheable.
+    prev = _LAST_QUESTION.get(context_key)
     if prev and any(w in f" {question.lower()} " for w in _REFERENTIAL):
         q_for_resolver = (
             f'Earlier request: "{prev}". Follow-up: "{question}". Answer the '
             f"follow-up; where it says the same/those/it/again, reuse the earlier "
             f"request's measures and dimensions and only apply the new change."
         )
+        return _finish_uncached(question, context_key, answer_question(q_for_resolver), _log)
 
-    out = answer_question(q_for_resolver)
-    if out.get("chat"):                           # greeting / small talk / unclear
-        return out["chat"], None
-    if out.get("query"):
-        _LAST_QUERY[thread_ts] = out["query"]     # for a follow-up lineage ask
-        _LAST_QUESTION[thread_ts] = question      # store the ORIGINAL phrasing
-    return format_reply(question, out), out
+    # Standalone question — cacheable. Serve from cache if fresh.
+    cached = querylog.cache_get(question)
+    if cached and cached.get("spec"):
+        return _from_cache(cached)
+
+    # Single-flight: only the first of N identical concurrent questions computes;
+    # the rest wait and read the cache → the DB is hit once, not N times.
+    leader, ev = querylog.single_flight_begin(question)
+    if not leader:
+        ev.wait(timeout=30)
+        cached = querylog.cache_get(question)
+        if cached and cached.get("spec"):
+            return _from_cache(cached)
+    try:
+        out = answer_question(question)
+        text, ret = _finish_uncached(question, context_key, out, _log)
+        if ret is not None and "error" not in out and ret.get("rows") is not None:
+            querylog.cache_put(question, text, ret.get("query"), ret.get("rows", []))
+        return text, ret
+    finally:
+        querylog.single_flight_end(question)
 
 
 def handle_question(question: str, thread_ts: str) -> str:
@@ -249,7 +308,7 @@ def handle_question(question: str, thread_ts: str) -> str:
 
 
 def _respond_async(say, question: str, context_key: str, reply_thread_ts: str = None,
-                   waiting: str = None):
+                   waiting: str = None, meta: dict = None):
     """Answer in a background thread (instant ack). `context_key` keys the
     per-conversation memory + the Google Sheet. `reply_thread_ts` is where the
     reply is shown: None = top level (DMs, so replies aren't hidden in threads);
@@ -282,7 +341,7 @@ def _respond_async(say, question: str, context_key: str, reply_thread_ts: str = 
 
         # PHASE 1 — the answer (numbers), fast (~3-5s)
         try:
-            text, out = compute_answer(question, context_key)
+            text, out = compute_answer(question, context_key, meta)
         except Exception as e:
             msg = str(e)
             key = os.environ.get("GEMINI_API_KEY", "")
@@ -315,7 +374,8 @@ def on_mention(event, say):
     # Fires for @mentions in CHANNELS (not DMs). Reply threaded under the mention.
     question = _strip_mentions(event.get("text", ""))
     thread_ts = event.get("thread_ts") or event.get("ts")
-    _respond_async(say, question, context_key=thread_ts, reply_thread_ts=thread_ts)
+    meta = {"user": event.get("user"), "channel": event.get("channel")}
+    _respond_async(say, question, context_key=thread_ts, reply_thread_ts=thread_ts, meta=meta)
 
 
 @app.event("message")
@@ -331,7 +391,8 @@ def on_message(event, say):
     # is one conversation → reply at TOP LEVEL (visible, not hidden in a thread)
     # and key memory on the DM channel so follow-ups share context.
     if event.get("channel_type") == "im":
-        _respond_async(say, text, context_key=event.get("channel"), reply_thread_ts=None)
+        meta = {"user": event.get("user"), "channel": event.get("channel")}
+        _respond_async(say, text, context_key=event.get("channel"), reply_thread_ts=None, meta=meta)
         return
 
     # In a CHANNEL: if it @mentions the bot, app_mention already handles it.
@@ -343,7 +404,8 @@ def on_message(event, say):
     if thread_ts:
         import thread_store
         if thread_store.get(thread_ts):
-            _respond_async(say, text, context_key=thread_ts, reply_thread_ts=thread_ts)
+            meta = {"user": event.get("user"), "channel": event.get("channel")}
+            _respond_async(say, text, context_key=thread_ts, reply_thread_ts=thread_ts, meta=meta)
 
 
 def _catchup_missed_dms():
@@ -381,7 +443,8 @@ def _catchup_missed_dms():
 
             print(f"[catchup] answering missed DM: {text[:50]!r}", flush=True)
             _respond_async(say, text, context_key=ch, reply_thread_ts=None,
-                           waiting=":wave: Sorry for the delay — catching up on this now…")
+                           waiting=":wave: Sorry for the delay — catching up on this now…",
+                           meta={"user": top.get("user"), "channel": ch})
     except Exception as e:
         print(f"[catchup] error: {e}", flush=True)
 
