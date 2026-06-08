@@ -10,6 +10,7 @@ Flow:
 """
 
 import os
+import re
 import json
 import time
 import requests
@@ -86,18 +87,30 @@ Rules:
   filter like "last 30 days", "this month", or "last week" is just a dateRange:
   DO NOT add granularity for those (omit it entirely).
 - filter operators: equals, notEquals, contains, gt, gte, lt, lte, set, notSet.
-- FIRST decide if this is even a data question. If it is NOT — a greeting, small
-  talk, thanks, a "test", or anything unclear — DO NOT invent a query. Reply
-  conversationally instead:
+- FIRST decide if this is even a data request. If it is clearly NOT about the data
+  — a greeting, thanks, small talk, or off-topic chatter ("hi", "how are you",
+  "test", random words) — reply conversationally:
   {{ "chat": "<short, friendly reply>" }}
   Examples:
     greeting ("hi", "hello", "how are you") ->
       {{ "chat": "Hey! Doing great, thanks for asking 🙂 Ask me anything about our payments — like revenue by merchant category, or success rate by card brand." }}
     capability ("what can you do?", "help") ->
       {{ "chat": "I answer questions about our payments data — revenue, success rates, counts, averages — sliced by category, card brand, country, customer segment, or time. Try: failed payments by method last week." }}
-    unclear ("test", random words) ->
-      {{ "chat": "I'm here! Ask me a payments question, e.g. how many successful payments did we have last month?" }}
 - Only emit a query spec when the message is genuinely asking about the data.
+- ASK, DON'T GUESS: if the question IS about the data but is genuinely AMBIGUOUS in
+  a way that would change the number, DO NOT guess — ask one short clarifying
+  question instead. Output:
+  {{ "clarify": "<one short question, offering the options>" }}
+  Trigger this when, and only when:
+    • the request is vague ("how are we doing?", "show me the numbers", "the usual")
+    • a word could map to MULTIPLE different measures (e.g. "payments" = the COUNT
+      of payments or their total VALUE? → ask which)
+    • a clearly time-sensitive ask has no time frame and it materially matters
+  Example:
+    "show me the numbers" / "how's business?" / "give me a report" ->
+      {{ "clarify": "Sure — which metric? e.g. revenue, payments count, or success rate? And over what time range?" }}
+  A specific, clear question (e.g. "revenue by merchant category last month") must
+  be ANSWERED, never clarified. {clarify_suffix}
 - If it IS a data question but cannot be answered with the available members:
   {{ "error": "short reason" }}
 """
@@ -252,11 +265,42 @@ def _sanitize_spec(spec: dict, question: str) -> dict:
     if not any(w in q for w in _TIME_SERIES_WORDS):
         for td in spec.get("timeDimensions", []) or []:
             td.pop("granularity", None)
+
+    # Drop invalid/unknown dateRanges (e.g. the model inventing "all time") —
+    # treat as no date filter (= all data) so the query still runs.
+    tds = spec.get("timeDimensions")
+    if tds is not None:
+        cleaned = []
+        for td in tds:
+            dr = td.get("dateRange")
+            if dr and not _valid_date_range(dr):
+                td.pop("dateRange", None)
+            if td.get("dateRange") or td.get("granularity"):
+                cleaned.append(td)          # keep only if it still filters or buckets
+        spec["timeDimensions"] = cleaned
     return spec
 
 
-def question_to_query(question: str, catalog: str) -> dict:
-    spec = _resolve_json(SYSTEM_TEMPLATE.format(catalog=catalog), question)
+def _valid_date_range(dr) -> bool:
+    if not isinstance(dr, str):
+        return False
+    d = dr.strip().lower()
+    if d in ("today", "yesterday"):
+        return True
+    if re.match(r"^(this|last)\s+(day|week|month|quarter|year)$", d):
+        return True
+    if re.match(r"^last\s+\d+\s+(day|week|month|quarter|year)s?$", d):
+        return True
+    return False
+
+
+_NO_CLARIFY = ("\n- IMPORTANT: the user has ALREADY clarified — do NOT ask to "
+               "clarify again. Produce a query spec, or an error.")
+
+
+def question_to_query(question: str, catalog: str, clarify_ok: bool = True) -> dict:
+    suffix = "" if clarify_ok else _NO_CLARIFY
+    spec = _resolve_json(SYSTEM_TEMPLATE.format(catalog=catalog, clarify_suffix=suffix), question)
     return _sanitize_spec(spec, question)
 
 
@@ -315,12 +359,16 @@ def run_query(cube_query: dict) -> dict:
     return {"error": "timed out waiting for Cube"}
 
 
-def answer_question(question: str) -> dict:
-    """End-to-end: returns {'chat':...} | {'query':..., 'rows':...} | {'error':...}."""
+def answer_question(question: str, clarify_ok: bool = True) -> dict:
+    """Returns {'chat'} | {'clarify'} | {'query','rows'} | {'error'}."""
     catalog = fetch_catalog()
-    spec = question_to_query(question, catalog)
+    spec = question_to_query(question, catalog, clarify_ok)
     if "chat" in spec:                       # greeting / small talk / unclear
         return {"chat": spec["chat"]}
+    if "clarify" in spec:                    # ambiguous → ask, don't guess
+        if clarify_ok:
+            return {"clarify": spec["clarify"]}
+        return {"error": "I couldn't pin that down — please rephrase with a specific metric."}
     if "error" in spec:
         return {"error": spec["error"]}
     result = run_query(spec)

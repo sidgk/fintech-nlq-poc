@@ -223,6 +223,9 @@ def _finish_uncached(question, context_key, out, _log):
     if out.get("chat"):                           # greeting / small talk / unclear
         _log("chat", None, 0, out["chat"], False)
         return out["chat"], None
+    if out.get("clarify"):                         # ambiguous → ask, don't guess
+        _log("clarify", None, 0, out["clarify"], False)
+        return out["clarify"], {"clarify": True}
     if "error" in out and "rows" not in out:
         ans = format_reply(question, out)
         _log("error", out.get("query"), 0, ans, False)
@@ -235,7 +238,7 @@ def _finish_uncached(question, context_key, out, _log):
     return ans, out
 
 
-def compute_answer(question: str, context_key: str, meta: dict = None):
+def compute_answer(question: str, context_key: str, meta: dict = None, clarify_ok: bool = True):
     """FAST path: returns (reply_text, out). Caches standalone data questions
     (compute once → serve everyone) and logs every interaction. Does NOT touch
     Google Sheets — numbers reach the user in seconds; the sheet follows."""
@@ -270,7 +273,8 @@ def compute_answer(question: str, context_key: str, meta: dict = None):
             f"follow-up; where it says the same/those/it/again, reuse the earlier "
             f"request's measures and dimensions and only apply the new change."
         )
-        return _finish_uncached(question, context_key, answer_question(q_for_resolver), _log)
+        return _finish_uncached(question, context_key,
+                                answer_question(q_for_resolver, clarify_ok), _log)
 
     # Standalone question — cacheable. Serve from cache if fresh.
     cached = querylog.cache_get(question)
@@ -286,7 +290,7 @@ def compute_answer(question: str, context_key: str, meta: dict = None):
         if cached and cached.get("spec"):
             return _from_cache(cached)
     try:
-        out = answer_question(question)
+        out = answer_question(question, clarify_ok)
         text, ret = _finish_uncached(question, context_key, out, _log)
         if ret is not None and "error" not in out and ret.get("rows") is not None:
             querylog.cache_put(question, text, ret.get("query"), ret.get("rows", []))
@@ -310,6 +314,7 @@ def handle_question(question: str, thread_ts: str) -> str:
 # ── Follow-up menu (numbered options — works WITHOUT Slack interactivity) ─────
 _PENDING_MENU = {}      # context_key -> {question, answer, log_id, spec}
 _AWAITING_FEEDBACK = {}  # context_key -> {question, answer, spec, log_id}; next msg = feedback
+_AWAITING_CLARIFY = {}   # context_key -> {question}; next msg answers a clarifying question
 _MSG_TO_LOG = {}        # answer message ts -> query_log id (for 👍/👎 emoji reactions)
 _MENU_LABEL = {1: "sheet_numbers", 2: "sheet_chart", 3: "lineage", 4: "feedback"}
 
@@ -421,8 +426,15 @@ def _handle_menu(choice, pending, say, reply_thread_ts, meta=None, context_key=N
 
 
 def _route(text, context_key, say, reply_thread_ts, meta):
-    """Capture pending feedback → else a menu pick → else a brand-new question."""
+    """Clarification reply → pending feedback → menu pick → else a new question."""
     m = meta or {}
+
+    # 0) Were we waiting for the user to answer a clarifying question?
+    clar = _AWAITING_CLARIFY.pop(context_key, None)
+    if clar is not None:
+        combined = f'{clar["question"]} — clarified as: {text}'
+        _respond_async(say, combined, context_key, reply_thread_ts, meta=meta, clarify_ok=False)
+        return
 
     # 1) Were we waiting for free-text feedback in this conversation?
     fb = _AWAITING_FEEDBACK.pop(context_key, None)
@@ -452,7 +464,7 @@ def _route(text, context_key, say, reply_thread_ts, meta):
 
 
 def _respond_async(say, question: str, context_key: str, reply_thread_ts: str = None,
-                   waiting: str = None, meta: dict = None):
+                   waiting: str = None, meta: dict = None, clarify_ok: bool = True):
     """Answer in a background thread (instant ack). `context_key` keys the
     per-conversation memory + the Google Sheet. `reply_thread_ts` is where the
     reply is shown: None = top level (DMs, so replies aren't hidden in threads);
@@ -484,7 +496,7 @@ def _respond_async(say, question: str, context_key: str, reply_thread_ts: str = 
         # Compute + show the numbers, then a numbered menu. The Google Sheet is
         # built ONLY if the user picks 1/2 (no wasted work; one sheet per question).
         try:
-            text, out = compute_answer(question, context_key, meta)
+            text, out = compute_answer(question, context_key, meta, clarify_ok)
         except Exception as e:
             msg = str(e)
             key = os.environ.get("GEMINI_API_KEY", "")
@@ -493,7 +505,10 @@ def _respond_async(say, question: str, context_key: str, reply_thread_ts: str = 
             show(f":warning: sorry, that failed: {msg}")
             return
 
-        if out and out.get("rows") is not None and "error" not in (out or {}):
+        if out and out.get("clarify"):
+            # ask, don't guess — the user's next message answers the clarification
+            _AWAITING_CLARIFY[context_key] = {"question": question}
+        elif out and out.get("rows") is not None and "error" not in (out or {}):
             _PENDING_MENU[context_key] = {"question": question,
                                           "answer": text,         # before the footer
                                           "log_id": out.get("log_id"),
