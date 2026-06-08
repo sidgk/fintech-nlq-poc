@@ -20,7 +20,7 @@ Slack ──▶ Resolver (local LLM) ──▶ Cube (semantic layer) ──▶ P
 | Transformation | **dbt Core** (`dbt/`) | host venv + in Airflow | Bronze→Silver→Gold build + quality **&** reconciliation tests |
 | Data | **Postgres 16** | Docker, host `:55432` / net `db:5432` | `raw` / `silver` / `gold` schemas |
 | Semantic layer | **Cube** (`model/`) | Docker, `:4000` | Defines measures/dimensions/joins; compiles query specs → SQL |
-| Resolver / LLM | **Ollama · llama3.1:8b** (`bot/resolver.py`) | **local** (host) | Question → validated Cube query spec (JSON). Free, no rate limits, private. Provider-pluggable (`LLM_PROVIDER` = ollama/gemini/anthropic) |
+| Resolver / LLM | **Ollama · qwen2.5:7b** (`bot/resolver.py`) | **local** (host) | Question → validated Cube query spec (JSON). Free, no rate limits, private. Provider-pluggable (`LLM_PROVIDER` = ollama/gemini/anthropic); llama3.1:8b kept as fallback |
 | Front door | **Slack** (`bot/app.py`) | host, Socket Mode | Receives questions, posts answers, runs the menu |
 | State / logs | **SQLite** (`bot/bot_state.db`) | host | Thread memory, query log, answer cache, feedback |
 | AI regression | **golden evals** (`evals/`) | host / CI | question → expected interpretation; fails on regression |

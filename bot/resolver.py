@@ -37,7 +37,7 @@ GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 # Ollama (local, FREE, unlimited) — used when LLM_PROVIDER=ollama. Runs the
 # model on this machine; no API key, no rate limits, fully private/offline.
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.1:8b")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:7b")
 
 
 def fetch_catalog() -> str:

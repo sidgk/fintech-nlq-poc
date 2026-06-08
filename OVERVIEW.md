@@ -58,7 +58,7 @@ In this project, the semantic layer is **literally a folder of plain-text files*
 
 ## 3. What is the role of the LLM (the AI model)?
 
-The LLM (here: **Llama 3.1, running locally** — free, private, no rate limits) is a **translator**, nothing more.
+The LLM (here: **Qwen 2.5, running locally** — free, private, no rate limits) is a **translator**, nothing more.
 
 - **Input:** the user's English question + the menu of available metrics (Cube's catalog).
 - **Output:** a small structured **query spec** (JSON) that says *which metric, which grouping, which time filter* — using **only items that exist on the menu**.
@@ -66,7 +66,7 @@ The LLM (here: **Llama 3.1, running locally** — free, private, no rate limits)
 
 That constraint is the entire safety story. A normal "text-to-SQL" bot lets the AI write arbitrary SQL — it can hallucinate joins, miscompute, or hit the wrong table. Here the AI **physically cannot** do that, because all it can emit is a choice among defined metrics, which we then validate.
 
-We also added **guardrails** around the LLM: we auto-correct any metric name it gets slightly wrong, strip time-buckets it adds when not asked, and route greetings/small-talk away from the data pipeline. So even an imperfect 8-billion-parameter model produces dependable results.
+We also added **guardrails** around the LLM: we auto-correct any metric name it gets slightly wrong, strip time-buckets it adds when not asked, and route greetings/small-talk away from the data pipeline. So even an imperfect 7-billion-parameter model produces dependable results.
 
 ---
 
@@ -76,7 +76,7 @@ We also added **guardrails** around the LLM: we auto-correct any metric name it 
 You in Slack:  "@Data Bot revenue by merchant category last month"
       │
       ▼
-1. LLM (Llama)   reads Cube's menu, translates →
+1. LLM (Qwen)   reads Cube's menu, translates →
                  {measures:[total_amount], dimensions:[merchants_category],
                   timeDimensions:[{created_at, last month}]}
                  (only menu items; never SQL)
@@ -130,7 +130,7 @@ So the full stack: **dbt cleans → Cube serves → LLM translates → Slack del
 > No. The AI only outputs a structured pick from the menu. It never connects to the database and never writes SQL. Cube runs the (pre-approved) SQL.
 
 **Q: What does this cost / what's the AI?**
-> The POC runs the AI model (Llama 3.1) locally — free, private, no per-query cost, no data leaving the machine. In production we'd point Cube at our real warehouse and could use a hosted model if we wanted.
+> The POC runs the AI model (Qwen 2.5) locally — free, private, no per-query cost, no data leaving the machine. In production we'd point Cube at our real warehouse and could use a hosted model if we wanted.
 
 **Q: How does it scale to real data?**
 > Same `model/` files — we just point Cube at the production warehouse (e.g. Athena/Trino over our data lake) instead of the demo Postgres. Cube's caching keeps it fast and cheap. The semantic layer and the bot don't change.
@@ -181,7 +181,7 @@ be confidently wrong. See `ROADMAP.md` for where this goes next.
 | **Airflow / Cosmos** | The scheduler that runs the dbt pipeline as a visual DAG |
 | **Star schema** | A facts table surrounded by dimension tables |
 | **Lineage** | The traceable path from source column → final number |
-| **LLM (Llama)** | The translator: English → query spec. Never writes SQL. |
+| **LLM (Qwen)** | The translator: English → query spec. Never writes SQL. |
 
 ---
 
