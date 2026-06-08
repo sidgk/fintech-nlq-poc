@@ -15,6 +15,8 @@ import json
 import time
 import requests
 
+import fastpath
+
 CUBE_API_URL = os.environ.get("CUBE_API_URL", "http://localhost:4000/cubejs-api/v1")
 
 # ── LLM provider ──────────────────────────────────────────────────────────
@@ -392,6 +394,16 @@ def run_query(cube_query: dict) -> dict:
 
 def answer_question(question: str, clarify_ok: bool = True) -> dict:
     """Returns {'chat'} | {'clarify'} | {'query','rows'} | {'error'}."""
+    # Deterministic fast-path: top exec questions skip the LLM entirely
+    # (sub-second + 100% reproducible).
+    fp = fastpath.match(question)
+    if fp:
+        fp = _sanitize_spec(fp, question)
+        result = run_query(fp)
+        if "error" in result:
+            return {"error": result["error"], "query": fp, "fastpath": True}
+        return {"query": fp, "rows": result.get("data", []), "fastpath": True}
+
     catalog = fetch_catalog()
     spec = question_to_query(question, catalog, clarify_ok)
     if "chat" in spec:                       # greeting / small talk / unclear

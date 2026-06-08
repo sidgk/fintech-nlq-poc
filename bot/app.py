@@ -13,6 +13,7 @@ import time
 import threading
 
 import querylog
+import freshness
 
 from slack_bolt import App
 # Prefer the websocket-client-based handler (ping/pong heartbeat + auto-reconnect)
@@ -543,6 +544,13 @@ def _respond_async(say, question: str, context_key: str, reply_thread_ts: str = 
                                           "spec": out.get("query")}
             if ts:
                 _MSG_TO_LOG[ts] = out.get("log_id")     # map answer msg → log row for 👍/👎
+            # trust line: fast-path marker + data freshness + test status
+            trust = ["⚡ instant (certified)"] if out.get("fastpath") else []
+            badge = freshness.badge()
+            if badge:
+                trust.append(badge.strip("_"))
+            if trust:
+                text = text + "\n_" + " · ".join(trust) + "_"
             text = text + "\n" + _menu_footer()
         show(text)
 
