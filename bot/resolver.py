@@ -71,7 +71,11 @@ CATALOG OF AVAILABLE MEASURES & DIMENSIONS:
 Rules:
 - Output ONLY a single JSON object, no prose, no markdown fences.
 - Use exact member names from the catalog (e.g. "payments_overview.succeeded_count").
-- Prefer the VIEW (payments_overview) over raw cubes when it covers the question.
+- Pick the *_overview VIEW whose topic matches the question, and use ONLY its members:
+    • payments_overview  → payments / transactions / revenue / success-rate questions
+    • accounts_overview  → partner / customer / merchant / account questions
+      (counts of accounts by status, industry, risk, country/entity, referral, test, …)
+  Never mix members from two different views in one query.
 - Shape:
   {{
     "measures": ["..."],
@@ -209,6 +213,12 @@ _TIME_SERIES_WORDS = ("trend", "over time", "by day", "by week", "by month",
                       "per month", "per quarter", "per year", "each day",
                       "each week", "each month", "each quarter")
 
+# Any hint of a time frame in the question. If NONE are present, we drop a
+# dateRange the model added on its own (no unasked filters reach an exec).
+_TIME_WORDS = ("last", "this", "today", "yesterday", "week", "month", "quarter",
+               "year", "day", "recent", "ytd", "mtd", "since", "ago", "between",
+               "during", "over the", "past", "current", "so far", " in 20")
+
 # Cube member catalog, cached for the process. Used to repair member names the
 # LLM gets slightly wrong (e.g. bare "created_at" -> "payments_overview.created_at").
 _MEMBER_INDEX = None
@@ -298,6 +308,12 @@ def _sanitize_spec(spec: dict, question: str) -> dict:
     if not any(w in q for w in _TIME_SERIES_WORDS):
         for td in spec.get("timeDimensions", []) or []:
             td.pop("granularity", None)
+
+    # No time words in the question → drop any dateRange the model added unasked
+    # (so "terminated accounts by country" isn't silently limited to "last year").
+    if not any(w in q for w in _TIME_WORDS):
+        for td in spec.get("timeDimensions", []) or []:
+            td.pop("dateRange", None)
 
     # Drop invalid/unknown dateRanges (e.g. the model inventing "all time") —
     # treat as no date filter (= all data) so the query still runs.

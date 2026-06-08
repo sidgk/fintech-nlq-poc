@@ -116,3 +116,85 @@ WHERE id % 500 = 0;   -- 40 rows (ids 500,1000,...,20000)
 
 -- Bronze indexes (light — heavy lifting happens in gold)
 CREATE INDEX idx_raw_payments_id ON raw.payments(id);
+
+
+-- ============================================================
+-- BRONZE: accounts (partners / customers) — one row per account.
+-- Intentionally messy: mixed-case status, single-letter risk (L/M/H), text
+-- dates, ~25 duplicate company_ids → SILVER dedups/typecasts/normalizes.
+-- ============================================================
+DROP TABLE IF EXISTS raw.accounts CASCADE;
+CREATE TABLE raw.accounts (
+    company_id             TEXT,
+    name_of_customer       TEXT,
+    industry               TEXT,
+    services_offered       TEXT,
+    client_type            TEXT,
+    account_status         TEXT,
+    account_opening_date   TEXT,
+    account_closing_date   TEXT,
+    blocked_date           TEXT,
+    reason_for_blocking    TEXT,
+    risk_scoring           TEXT,           -- L / M / H
+    bi_referral_party_name TEXT,
+    is_test_account        INT,
+    business_entity        TEXT
+);
+
+INSERT INTO raw.accounts
+WITH base AS (
+    SELECT
+        gs,
+        random() AS rnd,
+        (ARRAY['UK','DE','FR','ES','NL','IT','US'])[floor(random()*7)+1] AS entity,
+        (ARRAY['Retail','Gambling','Physical Store','E-Commerce','Professional Services',
+               'Financial Services','Technical Services','Hospitality','Travel','Healthcare'])[floor(random()*10)+1] AS industry,
+        (ARRAY['POS','Cards','Banking','POS, Cards','POS, Cards, Banking','Acquiring',
+               'Cards, Acquiring','Bank Account','POS, Bank Account'])[floor(random()*9)+1] AS services,
+        (ARRAY['merchant','sub_merchant','hybrid_sub_merchant'])[floor(random()*3)+1] AS client_type,
+        (ARRAY['L','M','H'])[floor(random()*3)+1] AS risk,
+        (now()::date - (floor(random()*9000))::int) AS open_date,
+        (random() < 0.40) AS has_ref,
+        (random() < 0.03) AS is_test
+    FROM generate_series(1, 2000) gs
+),
+typed AS (
+    SELECT *,
+        (CASE
+            WHEN rnd < 0.50 THEN 'Active'
+            WHEN rnd < 0.68 THEN 'Approved'
+            WHEN rnd < 0.83 THEN 'Rejected'
+            WHEN rnd < 0.93 THEN 'Terminated'
+            ELSE 'Blocked'
+         END) AS status
+    FROM base
+)
+SELECT
+    entity || lpad(gs::text, 6, '0'),
+    'Customer ' || gs,
+    industry,
+    services,
+    client_type,
+    (CASE WHEN gs % 7 = 0 THEN upper(status) WHEN gs % 5 = 0 THEN lower(status) ELSE status END),
+    open_date::text,
+    CASE WHEN status = 'Terminated' THEN (open_date + (floor(random()*1500)+30)::int)::text END,
+    CASE WHEN status = 'Blocked'    THEN (open_date + (floor(random()*1500)+30)::int)::text END,
+    CASE WHEN status = 'Blocked'    THEN (ARRAY['Fraud suspicion','AML review','Excessive chargebacks',
+               'KYC incomplete','Sanctions match'])[floor(random()*5)+1] END,
+    risk,
+    CASE WHEN has_ref THEN (ARRAY['Suchit','Maria','John','Priya','Acme Partners',
+               'FinIntro','Channel Partner'])[floor(random()*7)+1] END,
+    (CASE WHEN is_test THEN 1 ELSE 0 END),
+    entity
+FROM typed;
+
+-- ~25 duplicate company_ids (older copies) → SILVER keeps the latest.
+INSERT INTO raw.accounts
+SELECT company_id, name_of_customer, industry, services_offered, client_type, account_status,
+       ((account_opening_date::date) - (floor(random()*500)+30)::int)::text,
+       account_closing_date, blocked_date, reason_for_blocking, risk_scoring,
+       bi_referral_party_name, is_test_account, business_entity
+FROM raw.accounts
+WHERE (substring(company_id from '[0-9]+'))::int % 80 = 0;
+
+CREATE INDEX idx_raw_accounts_id ON raw.accounts(company_id);

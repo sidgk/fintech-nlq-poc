@@ -55,6 +55,32 @@ _ENTRIES = [
     (["revenue by merchant country", "revenue by country", "revenue per country"],
      {"measures": ["payments_overview.total_amount"],
       "dimensions": ["payments_overview.merchants_country"]}),
+
+    # ---- partner accounts ----
+    (["total accounts", "accounts", "number accounts", "accounts count",
+      "how many partners", "total partners", "number partners"],
+     {"measures": ["accounts_overview.count"]}),
+    (["active accounts", "number active accounts", "active partners"],
+     {"measures": ["accounts_overview.active_count"]}),
+    (["blocked accounts", "suspended accounts"],
+     {"measures": ["accounts_overview.blocked_count"]}),
+    (["terminated accounts", "closed accounts", "churned accounts"],
+     {"measures": ["accounts_overview.terminated_count"]}),
+    (["high risk accounts", "risky accounts", "high risk partners"],
+     {"measures": ["accounts_overview.high_risk_count"]}),
+    (["accounts by industry", "partners by industry", "accounts per industry"],
+     {"measures": ["accounts_overview.count"],
+      "dimensions": ["accounts_overview.industry"]}),
+    (["accounts by status", "accounts by account status", "partners by status"],
+     {"measures": ["accounts_overview.count"],
+      "dimensions": ["accounts_overview.account_status"]}),
+    (["accounts by country", "accounts by entity", "accounts by business entity",
+      "partners by country"],
+     {"measures": ["accounts_overview.count"],
+      "dimensions": ["accounts_overview.business_entity"]}),
+    (["accounts by risk", "accounts by risk level", "accounts by risk scoring"],
+     {"measures": ["accounts_overview.count"],
+      "dimensions": ["accounts_overview.risk_scoring"]}),
 ]
 
 _INDEX = {}

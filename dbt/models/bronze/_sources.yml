@@ -13,3 +13,5 @@ sources:
       - name: cards
       - name: payments
         description: "Raw payment events — may contain duplicate ids and text timestamps."
+      - name: accounts
+        description: "Raw partner/customer accounts — duplicate company_ids, text dates, messy status case."

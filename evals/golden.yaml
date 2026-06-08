@@ -42,3 +42,28 @@
   measures: [payments_overview.total_amount]
   dimensions: [payments_overview.merchants_country]
   min_rows: 1
+
+# ── partner accounts domain ──────────────────────────────────────────────
+- question: "how many active accounts do we have"
+  measures: [accounts_overview.active_count]
+  dimensions: []
+  rows: 1
+
+- question: "accounts by industry"
+  measures: [accounts_overview.count]
+  dimensions: [accounts_overview.industry]
+  rows: 10
+
+- question: "terminated accounts by country"
+  measures: [accounts_overview.terminated_count]
+  dimensions: [accounts_overview.business_entity]
+  min_rows: 1
+
+- question: "how many high risk accounts"
+  measures: [accounts_overview.high_risk_count]
+  dimensions: []
+  rows: 1
+
+- question: "how many partners came through a referral"
+  measures: [accounts_overview.referred_count]
+  min_rows: 1

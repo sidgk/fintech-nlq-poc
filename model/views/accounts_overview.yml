@@ -1,0 +1,37 @@
+views:
+  - name: accounts_overview
+    title: "Partner accounts overview"
+    description: "One flat surface for all partner/customer/account questions: account counts and rates sliced by status, industry, risk, country/entity, client type, services, referral, and dates. Prefer this view for questions about partners, customers, merchants, accounts, or companies."
+
+    cubes:
+      - join_path: accounts
+        includes:
+          - count
+          - active_count
+          - approved_count
+          - rejected_count
+          - terminated_count
+          - blocked_count
+          - high_risk_count
+          - referred_count
+          - test_account_count
+          - block_rate
+          - termination_rate
+          - name_of_customer
+          - industry
+          - services_offered
+          - client_type
+          - account_status
+          - risk_scoring
+          - business_entity
+          - reason_for_blocking
+          - bi_referral_party_name
+          - has_referral
+          - is_test_account
+          - has_pos
+          - has_cards
+          - has_banking
+          - has_acquiring
+          - account_opening_date
+          - account_closing_date
+          - blocked_date

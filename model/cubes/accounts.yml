@@ -1,0 +1,169 @@
+cubes:
+  - name: accounts
+    sql_table: gold.dim_accounts
+    title: "Partner accounts"
+    description: "Partner / customer accounts — one row per company. Synonyms: partners, customers, merchants, clients, accounts, companies, businesses onboarded."
+
+    # ---- MEASURES (meta.certified = reviewed & safe for exec reporting) ----
+    measures:
+      - name: count
+        type: count
+        title: "Number of accounts"
+        description: "Total partner accounts. Synonyms: accounts, partners, customers, clients, companies, how many partners."
+        meta: {certified: true}
+
+      - name: active_count
+        type: count
+        description: "Accounts currently active. Synonyms: active accounts, live accounts."
+        filters: [{ sql: "{CUBE}.account_status = 'Active'" }]
+        meta: {certified: true}
+
+      - name: approved_count
+        type: count
+        description: "Approved accounts."
+        filters: [{ sql: "{CUBE}.account_status = 'Approved'" }]
+        meta: {certified: true}
+
+      - name: rejected_count
+        type: count
+        description: "Rejected accounts. Synonyms: declined applications."
+        filters: [{ sql: "{CUBE}.account_status = 'Rejected'" }]
+        meta: {certified: true}
+
+      - name: terminated_count
+        type: count
+        description: "Terminated / closed accounts. Synonyms: churned, closed accounts."
+        filters: [{ sql: "{CUBE}.account_status = 'Terminated'" }]
+        meta: {certified: true}
+
+      - name: blocked_count
+        type: count
+        description: "Blocked accounts. Synonyms: suspended, frozen accounts."
+        filters: [{ sql: "{CUBE}.account_status = 'Blocked'" }]
+        meta: {certified: true}
+
+      - name: high_risk_count
+        type: count
+        description: "High-risk accounts. Synonyms: risky accounts."
+        filters: [{ sql: "{CUBE}.risk_scoring = 'High'" }]
+        meta: {certified: true}
+
+      - name: referred_count
+        type: count
+        description: "Accounts acquired via a referral / introducer."
+        filters: [{ sql: "{CUBE}.has_referral = true" }]
+        meta: {certified: true}
+
+      - name: test_account_count
+        type: count
+        description: "Test (non-real) accounts."
+        filters: [{ sql: "{CUBE}.is_test_account = true" }]
+        meta: {certified: true}
+
+      - name: block_rate
+        type: number
+        sql: "100.0 * {blocked_count} / NULLIF({count}, 0)"
+        title: "Block rate (%)"
+        description: "Percentage of accounts that are blocked."
+        meta: {certified: true}
+
+      - name: termination_rate
+        type: number
+        sql: "100.0 * {terminated_count} / NULLIF({count}, 0)"
+        title: "Termination rate (%)"
+        description: "Percentage of accounts terminated. Synonyms: churn rate."
+        meta: {certified: true}
+
+    # ---- DIMENSIONS ----
+    dimensions:
+      - name: company_id
+        sql: company_id
+        type: string
+        primary_key: true
+
+      - name: name_of_customer
+        sql: name_of_customer
+        type: string
+        description: "Partner / customer name."
+
+      - name: industry
+        sql: industry
+        type: string
+        description: "Industry / sector: Retail, Gambling, Physical Store, E-Commerce, Professional Services, Financial Services, Technical Services, Hospitality, Travel, Healthcare. Synonyms: sector, vertical, business type."
+
+      - name: services_offered
+        sql: services_offered
+        type: string
+        description: "Services we provide to the account (e.g. POS, Cards, Banking, Acquiring, Bank Account)."
+
+      - name: client_type
+        sql: client_type
+        type: string
+        description: "merchant, sub_merchant, or hybrid_sub_merchant."
+
+      - name: account_status
+        sql: account_status
+        type: string
+        description: "Account status: Active, Approved, Rejected, Terminated, Blocked. Synonyms: state, status."
+
+      - name: risk_scoring
+        sql: risk_scoring
+        type: string
+        description: "Risk rating: Low, Medium, High. Synonyms: risk level, risk band."
+
+      - name: business_entity
+        sql: business_entity
+        type: string
+        description: "Legal entity / country of the business: UK, DE, FR, ES, NL, IT, US. Synonyms: country, entity, region, location."
+
+      - name: reason_for_blocking
+        sql: reason_for_blocking
+        type: string
+        description: "Why an account was blocked (Fraud suspicion, AML review, Excessive chargebacks, KYC incomplete, Sanctions match)."
+
+      - name: bi_referral_party_name
+        sql: bi_referral_party_name
+        type: string
+        description: "Name of the referral party / introducer who brought the account."
+
+      - name: has_referral
+        sql: has_referral
+        type: boolean
+        description: "Whether the account came via a referral."
+
+      - name: is_test_account
+        sql: is_test_account
+        type: boolean
+        description: "Whether this is a test (non-real) account."
+
+      - name: has_pos
+        sql: has_pos
+        type: boolean
+        description: "Account uses POS."
+      - name: has_cards
+        sql: has_cards
+        type: boolean
+        description: "Account uses card services."
+      - name: has_banking
+        sql: has_banking
+        type: boolean
+        description: "Account uses banking."
+      - name: has_acquiring
+        sql: has_acquiring
+        type: boolean
+        description: "Account uses acquiring."
+
+      - name: account_opening_date
+        sql: account_opening_date
+        type: time
+        description: "When the account was opened. Use for time filters (this year, last month, last 7 days)."
+
+      - name: account_closing_date
+        sql: account_closing_date
+        type: time
+        description: "When the account was closed (terminated accounts)."
+
+      - name: blocked_date
+        sql: blocked_date
+        type: time
+        description: "When the account was blocked."

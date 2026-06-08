@@ -1,0 +1,22 @@
+version: 2
+
+models:
+  - name: dim_accounts
+    description: "GOLD partner-account dimension — one row per company_id."
+    columns:
+      - name: company_id
+        description: "Account id. unique proves silver dedup worked."
+        tests:
+          - not_null
+          - unique
+      - name: account_status
+        description: "Normalized status. accepted_values proves the messy-case clean worked."
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['Active', 'Approved', 'Rejected', 'Terminated', 'Blocked']
+      - name: risk_scoring
+        description: "Normalized risk. proves L/M/H mapping worked."
+        tests:
+          - accepted_values:
+              values: ['Low', 'Medium', 'High']
