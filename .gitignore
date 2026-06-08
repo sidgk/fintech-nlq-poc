@@ -27,3 +27,5 @@ dbt/.user.yml
 bot/credentials.json
 bot/token.json
 bot/bot_state.db
+bot/bot_state.db-shm
+bot/bot_state.db-wal
