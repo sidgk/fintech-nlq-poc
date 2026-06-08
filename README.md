@@ -23,6 +23,7 @@ dimensions we defined. That's what makes it trustworthy enough for finance/risk.
 | **[CHANGELOG.md](CHANGELOG.md)** | what's been achieved so far |
 | **[DEMO_SCRIPT.md](DEMO_SCRIPT.md)** | live demo steps |
 | **[workflow/process.md](workflow/process.md)** | run / operate / extend |
+| **[docs/adding-a-domain.md](docs/adding-a-domain.md)** | add a new table/domain (recipe) |
 
 > **Phase 1 is built** — the numbers are no longer hand-curated over raw tables.
 > A **dbt Core Medallion pipeline** (Bronze `raw` → Silver `stg_*` → Gold
