@@ -115,7 +115,15 @@ warehouse swap (Athena/Iceberg) · always-on deploy · MCP.
 ## Already in place (the baseline this builds on)
 
 ✅ Governed semantic layer (Cube) · ✅ dbt Medallion + quality **&** reconciliation
-tests · ✅ Airflow/Cosmos orchestration · ✅ local LLM (free, private, no limits) ·
-✅ guardrails (qualify names, strip granularity, intent routing) · ✅ lineage ·
-✅ answer cache + single-flight · ✅ query log + feedback (with sentiment) ·
-✅ golden-eval suite · ✅ on-demand + reused Google Sheets · ✅ self-healing bot.
+tests · ✅ Airflow/Cosmos orchestration · ✅ local LLM **qwen2.5:7b** (free, private,
+no limits) · ✅ guardrails (qualify names, strip granularity, drop invalid dateRanges,
+intent routing) · ✅ lineage · ✅ answer cache + single-flight · ✅ query log +
+feedback (👍/👎 + free-text w/ sentiment) · ✅ golden-eval suite · ✅ on-demand +
+reused Google Sheets · ✅ self-healing bot.
+
+**Exec-grade accuracy shipped:** ✅ **metric certification tiers** (+ `CERTIFIED_ONLY`
+block) · ✅ **ask-don't-guess** · ✅ **deterministic fast-path** (sub-second, 100%
+reproducible) · ✅ **freshness + test-status badge** on every answer.
+
+**Remaining top P0s:** external-source reconciliation (finance GL) · anomaly detection ·
+definition-on-demand · then H2 (roles/discoverability) and H3 (tenant isolation).

@@ -38,8 +38,11 @@ unable to leave the building.** Accuracy is enforced at three independent layers
 - **Golden-question evals** (`evals/run_evals.py`) — question → expected
   interpretation + invariants, run on every metric/model/prompt change. A failure
   means the AI mis-understood a question → do not ship.
-- (Roadmap) **ask-don't-guess** on ambiguity; a deterministic fast-path for the
-  top exec questions that bypasses the LLM entirely.
+- **ask-don't-guess (built)** — ambiguous/vague requests get a clarifying question
+  instead of a guess.
+- **deterministic fast-path (built)** — `bot/fastpath.py` resolves the top exec
+  questions to a fixed reviewed spec with no LLM → sub-second + 100% reproducible.
+- **trust badge (built)** — every answer shows data freshness + dbt test status.
 
 ## Run the gates
 ```bash

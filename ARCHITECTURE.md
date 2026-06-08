@@ -80,6 +80,12 @@ Cube reads **only** `gold.*`.
   counts). Additivity discipline (rates = ratio-of-sums, never avg-of-rates).
 - **Interpretation:** **golden evals** (`evals/run_evals.py`) — question → expected
   measures/dimensions + invariants, run on every change; exits 1 on regression.
+- **Certification tiers** — `meta.certified` per measure; experimental metrics get a
+  caveat, blocked entirely in `CERTIFIED_ONLY` mode.
+- **Deterministic fast-path** (`bot/fastpath.py`) — top exec questions skip the LLM →
+  sub-second + 100% reproducible.
+- **Ask-don't-guess** — clarify on ambiguity instead of guessing.
+- **Trust badge** (`bot/freshness.py`) — freshness + dbt test status on every answer.
 
 ## Ports (remapped to avoid clashes on this Mac)
 

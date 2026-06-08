@@ -20,6 +20,7 @@ dimensions we defined. That's what makes it trustworthy enough for finance/risk.
 | **[WALKTHROUGH.md](WALKTHROUGH.md)** | deep technical trace, raw → answer |
 | **[docs/accuracy.md](docs/accuracy.md)** | how we guarantee correct numbers |
 | **[ROADMAP.md](ROADMAP.md)** | strategic plan (accuracy-first), 3-horizon rollout |
+| **[CHANGELOG.md](CHANGELOG.md)** | what's been achieved so far |
 | **[DEMO_SCRIPT.md](DEMO_SCRIPT.md)** | live demo steps |
 | **[workflow/process.md](workflow/process.md)** | run / operate / extend |
 
