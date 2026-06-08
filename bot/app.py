@@ -22,7 +22,7 @@ try:
 except Exception:
     from slack_bolt.adapter.socket_mode import SocketModeHandler
 
-from resolver import answer_question, classify_intent, is_lineage
+from resolver import answer_question, classify_intent, is_lineage, is_certified
 
 app = App(token=os.environ["SLACK_BOT_TOKEN"])
 
@@ -218,6 +218,24 @@ def _model_name() -> str:
     return os.environ.get("GEMINI_MODEL", "gemini")
 
 
+def _certified_only() -> bool:
+    return os.environ.get("CERTIFIED_ONLY", "").lower() in ("1", "true", "yes")
+
+
+def _cert_check(spec):
+    """(block_note, caveat). In CERTIFIED_ONLY mode an uncertified metric is blocked;
+    otherwise a caveat is appended to the answer. Certified metrics → (None, None)."""
+    uncert = [m for m in (spec or {}).get("measures", []) or [] if not is_certified(m)]
+    if not uncert:
+        return None, None
+    names = ", ".join(m.split(".")[-1] for m in uncert)
+    if _certified_only():
+        return (f":lock: *{names}* is not **certified** for executive reporting yet — "
+                f"I'm holding the number back. Ask the data team to certify it."), None
+    return None, (f"\n\n:warning: _*{names}* is **experimental** — not yet certified for "
+                  f"exec reporting; use with caution._")
+
+
 def _finish_uncached(question, context_key, out, _log):
     """Format + log a freshly-computed result. Returns (text, out)."""
     if out.get("chat"):                           # greeting / small talk / unclear
@@ -230,10 +248,16 @@ def _finish_uncached(question, context_key, out, _log):
         ans = format_reply(question, out)
         _log("error", out.get("query"), 0, ans, False)
         return ans, out
+    block, caveat = _cert_check(out.get("query"))   # certification gate
+    if block:
+        _log("blocked", out.get("query"), 0, block, False)
+        return block, None
     if out.get("query"):
         _LAST_QUERY[context_key] = out["query"]   # for a follow-up lineage ask
         _LAST_QUESTION[context_key] = question
     ans = format_reply(question, out)
+    if caveat:
+        ans += caveat
     out["log_id"] = _log("data", out.get("query"), len(out.get("rows", [])), ans, False)
     return ans, out
 
@@ -250,6 +274,10 @@ def compute_answer(question: str, context_key: str, meta: dict = None, clarify_o
                             rc, answer, cache_hit, int((time.time() - t0) * 1000), _model_name())
 
     def _from_cache(c):
+        block, _ = _cert_check(c.get("spec"))      # strict-mode block on cache hits too
+        if block:
+            _log("blocked", c.get("spec"), 0, block, True)
+            return block, None
         _LAST_QUERY[context_key] = c["spec"]
         _LAST_QUESTION[context_key] = question
         log_id = _log("data", c["spec"], c["row_count"], c["answer"], True)

@@ -12,6 +12,8 @@ views:
           - total_amount
           - avg_amount
           - success_rate
+          - refunded_count
+          - refund_rate
           - status
           - payment_method
           - currency

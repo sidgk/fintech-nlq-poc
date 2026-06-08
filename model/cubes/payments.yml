@@ -17,11 +17,16 @@ cubes:
         relationship: many_to_one
 
     # ---- MEASURES: the numbers stakeholders ask for ----
+    # meta.certified = true  → reviewed, reconciled, safe for exec reporting.
+    # meta.certified = false → experimental; answered with a caveat (or blocked
+    #                          entirely in CERTIFIED_ONLY mode).
     measures:
       - name: count
         type: count
         title: "Number of payments"
         description: "Total count of payment transactions. Synonyms: transactions, payments, number of payments, how many payments."
+        meta:
+          certified: true
 
       - name: succeeded_count
         type: count
@@ -29,6 +34,8 @@ cubes:
         description: "Count of payments that completed successfully. Synonyms: successful, approved, completed payments."
         filters:
           - sql: "{CUBE}.status = 'succeeded'"
+        meta:
+          certified: true
 
       - name: failed_count
         type: count
@@ -36,6 +43,8 @@ cubes:
         description: "Count of payments that failed. Synonyms: declined, rejected, failed payments."
         filters:
           - sql: "{CUBE}.status = 'failed'"
+        meta:
+          certified: true
 
       - name: total_amount
         type: sum
@@ -43,6 +52,8 @@ cubes:
         title: "Total amount"
         description: "Sum of payment amounts in major currency units. Synonyms: revenue, total value, payment volume, gross amount."
         format: currency
+        meta:
+          certified: true
 
       - name: avg_amount
         type: avg
@@ -50,12 +61,34 @@ cubes:
         title: "Average payment amount"
         description: "Average payment size in major currency units. Synonyms: average transaction value, mean payment."
         format: currency
+        meta:
+          certified: true
 
       - name: success_rate
         type: number
         sql: "100.0 * {succeeded_count} / NULLIF({count}, 0)"
         title: "Success rate (%)"
         description: "Percentage of payments that succeeded. Synonyms: approval rate, acceptance rate."
+        meta:
+          certified: true
+
+      # ---- EXPERIMENTAL (not yet certified) ----
+      - name: refunded_count
+        type: count
+        title: "Refunded payments"
+        description: "Count of payments that were refunded. Synonyms: refunds, refunded."
+        filters:
+          - sql: "{CUBE}.status = 'refunded'"
+        meta:
+          certified: false
+
+      - name: refund_rate
+        type: number
+        sql: "100.0 * {refunded_count} / NULLIF({count}, 0)"
+        title: "Refund rate (%)"
+        description: "Percentage of payments refunded. Synonyms: refund percentage."
+        meta:
+          certified: false
 
     # ---- DIMENSIONS: how stakeholders slice those numbers ----
     dimensions:

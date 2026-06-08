@@ -233,6 +233,37 @@ def _member_index():
     return _MEMBER_INDEX
 
 
+_CERT_INDEX = None
+
+
+def certified_measures():
+    """(certified_set, known_set) of full measure names, from Cube's meta.certified."""
+    global _CERT_INDEX
+    if _CERT_INDEX is not None:
+        return _CERT_INDEX
+    certified, known = set(), set()
+    try:
+        cubes = requests.get(f"{CUBE_API_URL}/meta", timeout=30).json().get("cubes", [])
+        for c in cubes:
+            for m in c.get("measures", []):
+                known.add(m["name"])
+                cert = (m.get("meta") or {}).get("certified")
+                if cert is True or str(cert).lower() == "true":
+                    certified.add(m["name"])
+    except Exception:
+        pass
+    _CERT_INDEX = (certified, known)
+    return _CERT_INDEX
+
+
+def is_certified(member: str) -> bool:
+    """True if a measure is certified (or isn't a known measure — dimensions pass)."""
+    certified, known = certified_measures()
+    if member not in known:
+        return True                  # dimensions / non-measures aren't gated
+    return member in certified
+
+
 def _qualify(member):
     """Repair a member reference to a valid 'cube.member' name from the catalog."""
     if not isinstance(member, str) or not member:

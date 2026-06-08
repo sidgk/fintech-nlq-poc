@@ -26,8 +26,10 @@ unable to leave the building.** Accuracy is enforced at three independent layers
 ## Layer 2 — Definition correctness (semantic layer)
 - One reviewed definition per metric, version-controlled in Git (`model/*.yml`),
   with descriptions + synonyms the AI reads.
-- (Roadmap) **Certification tiers** — tag metrics `certified` vs `experimental`;
-  the C-level path only answers from certified metrics.
+- **Certification tiers (built)** — each measure carries `meta.certified` in the
+  semantic layer. Uncertified ("experimental") metrics are answered with a caveat,
+  and **blocked entirely** in `CERTIFIED_ONLY` mode (the C-level setting). So an
+  exec never gets an experimental number presented as fact.
 
 ## Layer 3 — Interpretation correctness (the AI)
 - The LLM can only pick from **defined members** — it never writes SQL.
