@@ -1,0 +1,62 @@
+semantic_models:
+  - name: payments
+    description: "Payment transactions — one row per payment."
+    model: ref('fct_payments')
+    defaults:
+      agg_time_dimension: created_at
+    entities:
+      - name: payment
+        type: primary
+        expr: id
+    dimensions:
+      - name: status
+        type: categorical
+      - name: payment_method
+        type: categorical
+      - name: currency
+        type: categorical
+      - name: created_at
+        type: time
+        type_params:
+          time_granularity: day
+    measures:
+      - name: payments
+        agg: count
+        expr: id
+      - name: succeeded
+        agg: count
+        expr: "case when status = 'succeeded' then id end"
+      - name: failed
+        agg: count
+        expr: "case when status = 'failed' then id end"
+      - name: revenue_amount
+        agg: sum
+        expr: amount
+
+metrics:
+  - name: payment_count
+    label: "Number of payments"
+    type: simple
+    type_params:
+      measure: payments
+  - name: revenue
+    label: "Revenue"
+    type: simple
+    type_params:
+      measure: revenue_amount
+  - name: succeeded_count
+    label: "Successful payments"
+    type: simple
+    type_params:
+      measure: succeeded
+  - name: failed_count
+    label: "Failed payments"
+    type: simple
+    type_params:
+      measure: failed
+  - name: payment_success_rate
+    label: "Payment success rate"
+    type: ratio
+    type_params:
+      numerator: succeeded_count
+      denominator: payment_count

@@ -1,0 +1,92 @@
+# MetricFlow semantic layer for partner accounts — lives IN the dbt project,
+# on the gold table. This is what our own MCP server will serve to the AI
+# (mimicking the company stack: MetricFlow + custom MCP server, no Cube).
+semantic_models:
+  - name: accounts
+    description: "Partner / customer accounts — one row per company."
+    model: ref('dim_accounts')
+    defaults:
+      agg_time_dimension: account_opening_date
+
+    entities:
+      - name: account
+        type: primary
+        expr: company_id
+
+    dimensions:
+      - name: account_status
+        type: categorical
+      - name: industry
+        type: categorical
+      - name: risk_scoring
+        type: categorical
+      - name: business_entity
+        type: categorical
+      - name: client_type
+        type: categorical
+      - name: account_opening_date
+        type: time
+        type_params:
+          time_granularity: day
+
+    measures:
+      - name: accounts
+        agg: count_distinct
+        expr: company_id
+      - name: active_accounts
+        agg: count_distinct
+        expr: "case when account_status = 'Active' then company_id end"
+      - name: approved_accounts
+        agg: count_distinct
+        expr: "case when account_status = 'Approved' then company_id end"
+      - name: rejected_accounts
+        agg: count_distinct
+        expr: "case when account_status = 'Rejected' then company_id end"
+      - name: terminated_accounts
+        agg: count_distinct
+        expr: "case when account_status = 'Terminated' then company_id end"
+      - name: blocked_accounts
+        agg: count_distinct
+        expr: "case when account_status = 'Blocked' then company_id end"
+      - name: high_risk_accounts
+        agg: count_distinct
+        expr: "case when risk_scoring = 'High' then company_id end"
+
+metrics:
+  - name: account_count
+    label: "Number of accounts"
+    type: simple
+    type_params:
+      measure: accounts
+  - name: active_account_count
+    label: "Active accounts"
+    type: simple
+    type_params:
+      measure: active_accounts
+  - name: terminated_account_count
+    label: "Terminated accounts"
+    type: simple
+    type_params:
+      measure: terminated_accounts
+  - name: blocked_account_count
+    label: "Blocked accounts"
+    type: simple
+    type_params:
+      measure: blocked_accounts
+  - name: high_risk_account_count
+    label: "High-risk accounts"
+    type: simple
+    type_params:
+      measure: high_risk_accounts
+  - name: block_rate
+    label: "Block rate (%)"
+    type: ratio
+    type_params:
+      numerator: blocked_account_count
+      denominator: account_count
+  - name: termination_rate
+    label: "Termination rate (%)"
+    type: ratio
+    type_params:
+      numerator: terminated_account_count
+      denominator: account_count
