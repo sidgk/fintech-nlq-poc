@@ -1,0 +1,136 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# YOUR-COMPANY VERSION of the accounts semantic layer — dbt MetricFlow form.
+#
+# We used Cube in the POC. Your company uses dbt Core + an MCP server, so the
+# semantic layer lives INSIDE your dbt project as MetricFlow YAML (NOT Cube).
+#
+# WHERE TO PUT THIS:  your-dbt-repo/models/semantic/accounts.yml
+#   (next to your gold models; one semantic_model per gold table, + metrics)
+#
+# HOW IT'S SERVED:  MetricFlow compiles these metrics to SQL on Athena/Iceberg;
+#   your team's MCP server calls MetricFlow to answer the AI. You define metrics;
+#   the MCP server exposes them. Confirm with your team that the MCP server's
+#   metric source IS dbt MetricFlow (it almost certainly is on dbt Core).
+#
+# Same concepts you learned in Cube — measures + dimensions + metrics — just dbt's
+# syntax. `meta:` carries the certification flag for the exec-trust gate.
+# ─────────────────────────────────────────────────────────────────────────────
+
+semantic_models:
+  - name: accounts
+    description: "Partner / customer accounts — one row per company."
+    model: ref('dim_accounts')          # your gold table
+    defaults:
+      agg_time_dimension: account_opening_date
+
+    entities:
+      - name: account
+        type: primary
+        expr: company_id
+
+    dimensions:
+      - name: account_status
+        type: categorical               # Active / Approved / Rejected / Terminated / Blocked
+      - name: industry
+        type: categorical
+      - name: risk_scoring
+        type: categorical               # Low / Medium / High
+      - name: business_entity
+        type: categorical               # country / legal entity
+      - name: client_type
+        type: categorical
+      - name: services_offered
+        type: categorical
+      - name: reason_for_blocking
+        type: categorical
+      - name: has_referral
+        type: categorical
+      - name: is_test_account
+        type: categorical
+      - name: account_opening_date
+        type: time
+        type_params:
+          time_granularity: day
+
+    # MEASURES = the raw aggregations. (Filtered counts use a CASE expr — the same
+    # thing Cube generated under the hood for active_count.)
+    measures:
+      - name: accounts
+        agg: count_distinct
+        expr: company_id
+      - name: active_accounts
+        agg: count_distinct
+        expr: "case when account_status = 'Active' then company_id end"
+      - name: approved_accounts
+        agg: count_distinct
+        expr: "case when account_status = 'Approved' then company_id end"
+      - name: rejected_accounts
+        agg: count_distinct
+        expr: "case when account_status = 'Rejected' then company_id end"
+      - name: terminated_accounts
+        agg: count_distinct
+        expr: "case when account_status = 'Terminated' then company_id end"
+      - name: blocked_accounts
+        agg: count_distinct
+        expr: "case when account_status = 'Blocked' then company_id end"
+      - name: high_risk_accounts
+        agg: count_distinct
+        expr: "case when risk_scoring = 'High' then company_id end"
+      - name: referred_accounts
+        agg: count_distinct
+        expr: "case when has_referral then company_id end"
+
+# METRICS = the named business numbers the AI / MCP server can ask for.
+metrics:
+  - name: account_count
+    label: "Number of accounts"
+    type: simple
+    type_params:
+      measure: accounts
+    meta: {certified: true}
+
+  - name: active_accounts
+    label: "Active accounts"
+    type: simple
+    type_params:
+      measure: active_accounts
+    meta: {certified: true}
+
+  - name: terminated_accounts
+    label: "Terminated accounts"
+    type: simple
+    type_params:
+      measure: terminated_accounts
+    meta: {certified: true}
+
+  - name: blocked_accounts
+    label: "Blocked accounts"
+    type: simple
+    type_params:
+      measure: blocked_accounts
+    meta: {certified: true}
+
+  - name: high_risk_accounts
+    label: "High-risk accounts"
+    type: simple
+    type_params:
+      measure: high_risk_accounts
+    meta: {certified: true}
+
+  # RATIO metric — numerator/denominator measures (stays correct when sliced,
+  # because it's ratio-of-sums, exactly like Cube's block_rate).
+  - name: block_rate
+    label: "Block rate (%)"
+    type: ratio
+    type_params:
+      numerator: blocked_accounts
+      denominator: accounts
+    meta: {certified: true}
+
+  - name: termination_rate
+    label: "Termination rate (%)"
+    type: ratio
+    type_params:
+      numerator: terminated_accounts
+      denominator: accounts
+    meta: {certified: true}
