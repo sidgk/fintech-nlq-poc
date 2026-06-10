@@ -1,5 +1,5 @@
 """
-datalake-metrics — our own MCP server (mimics the company's stack).
+datalake-metrics — a custom MCP server over a MetricFlow semantic layer.
 
 It exposes the **MetricFlow semantic layer** (defined in dbt, on the gold models)
 to any MCP-compatible AI client (e.g. Claude Desktop) as a small set of tools:
@@ -9,9 +9,13 @@ to any MCP-compatible AI client (e.g. Claude Desktop) as a small set of tools:
     query_metric(metrics, group_by, ...)    → the numbers (MetricFlow compiles the SQL)
 
 The AI NEVER writes SQL. It picks a defined metric + dimensions; MetricFlow turns
-that into governed SQL on the warehouse (here Postgres; in prod Athena/Iceberg).
-This is exactly the pattern of a company "datalake-mcp" server — just pointed at
-our local dbt project instead of theirs.
+that into governed SQL on the warehouse (here Postgres; in prod a cloud warehouse
+such as Athena/Iceberg, Snowflake, or BigQuery via the matching dbt adapter).
+
+This is the standard pattern for a custom-MCP + dbt-semantic-layer stack: the
+metric definitions live in the dbt project, MetricFlow compiles them, and a thin
+MCP server serves them to the AI. Swapping the warehouse adapter is the only
+change needed to point it at a different backend.
 
 Run standalone:  python mcp_server/server.py   (speaks MCP over stdio)
 Connect it to Claude Desktop via mcp_server/claude_desktop_config.example.json

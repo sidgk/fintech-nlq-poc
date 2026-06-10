@@ -1,6 +1,6 @@
-# datalake-metrics — our own MCP server (mimics the company stack)
+# datalake-metrics — a custom MCP server over a MetricFlow semantic layer
 
-This replaces Cube with the **exact pattern your company uses**: a custom MCP
+This replaces Cube with a **custom-MCP + dbt-semantic-layer** pattern: a small MCP
 server that serves a **MetricFlow semantic layer** (defined in dbt, on the gold
 models) to an AI client. **No Cube.** The AI never writes SQL.
 
@@ -51,18 +51,21 @@ venv/bin/python mcp_server/server.py
    > "Payment success rate by card status."
    Claude will call `query_metric` and answer from MetricFlow.
 
-## How this maps to your company
-| Our POC | Your company |
-|---|---|
-| `mcp_server/server.py` | your **datalake-mcp** repo |
-| `dbt/models/semantic/*.yml` (MetricFlow) | your **data-engineering** repo, on the gold models |
-| Postgres gold | Athena/Iceberg gold |
-| Claude Desktop | whatever AI client calls your MCP server |
+## How this maps to a two-repo production stack
+A common production layout splits this across two repos. This POC keeps both sides
+in one place so the whole loop is runnable:
 
-To go from POC → company: move the `models/semantic/*.yml` into your
-data-engineering repo, point MetricFlow at your warehouse (`dbt-athena`), and run
-this same `query_metric` handler in your datalake-mcp server. (See
-`docs/metricflow/SETUP.md`.)
+| This POC | Two-repo production layout |
+|---|---|
+| `mcp_server/server.py` | the **MCP-server** repo |
+| `dbt/models/semantic/*.yml` (MetricFlow) | the **data-engineering** (dbt) repo, on the gold models |
+| Postgres gold | a cloud warehouse (Athena/Iceberg, Snowflake, BigQuery …) |
+| Claude Desktop | whatever AI client calls the MCP server |
+
+To go from POC → production: move the `models/semantic/*.yml` into the
+data-engineering repo, point MetricFlow at the production warehouse (e.g.
+`dbt-athena`), and run this same `query_metric` handler in the MCP-server repo.
+(See `docs/metricflow/SETUP.md`.)
 
 ## Accuracy carries over
 Reconciliation + quality tests (dbt), certification (`meta` on metrics), golden

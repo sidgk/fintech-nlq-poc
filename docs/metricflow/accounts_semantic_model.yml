@@ -1,25 +1,25 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# YOUR-COMPANY VERSION of the accounts semantic layer — dbt MetricFlow form.
+# Accounts semantic layer — dbt MetricFlow form (for a dbt Core + MCP-server stack).
 #
-# We used Cube in the POC. Your company uses dbt Core + an MCP server, so the
-# semantic layer lives INSIDE your dbt project as MetricFlow YAML (NOT Cube).
+# The POC used Cube. On a dbt Core + MCP-server stack the semantic layer lives
+# INSIDE the dbt project as MetricFlow YAML (NOT Cube).
 #
-# WHERE TO PUT THIS:  your-dbt-repo/models/semantic/accounts.yml
-#   (next to your gold models; one semantic_model per gold table, + metrics)
+# WHERE TO PUT THIS:  <dbt-repo>/models/semantic/accounts.yml
+#   (next to the gold models; one semantic_model per gold table, + metrics)
 #
-# HOW IT'S SERVED:  MetricFlow compiles these metrics to SQL on Athena/Iceberg;
-#   your team's MCP server calls MetricFlow to answer the AI. You define metrics;
-#   the MCP server exposes them. Confirm with your team that the MCP server's
-#   metric source IS dbt MetricFlow (it almost certainly is on dbt Core).
+# HOW IT'S SERVED:  MetricFlow compiles these metrics to SQL on the warehouse
+#   (Athena/Iceberg, Snowflake, BigQuery …); the MCP server calls MetricFlow to
+#   answer the AI. You define metrics; the MCP server exposes them. On a dbt Core
+#   stack the MCP server's metric source is dbt MetricFlow.
 #
-# Same concepts you learned in Cube — measures + dimensions + metrics — just dbt's
-# syntax. `meta:` carries the certification flag for the exec-trust gate.
+# Same concepts as Cube — measures + dimensions + metrics — just dbt's syntax.
+# `meta:` carries the certification flag for the exec-trust gate.
 # ─────────────────────────────────────────────────────────────────────────────
 
 semantic_models:
   - name: accounts
     description: "Partner / customer accounts — one row per company."
-    model: ref('dim_accounts')          # your gold table
+    model: ref('dim_accounts')          # the gold table
     defaults:
       agg_time_dimension: account_opening_date
 
