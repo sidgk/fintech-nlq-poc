@@ -408,8 +408,17 @@ def run_query(cube_query: dict) -> dict:
     return {"error": "timed out waiting for Cube"}
 
 
+# Which semantic-layer backend serves the bot:
+#   "cube"        → Cube /load (the original POC path)
+#   "metricflow"  → the MCP server's MetricFlow layer (the company-stack pattern)
+SEMANTIC_BACKEND = os.environ.get("SEMANTIC_BACKEND", "cube").lower()
+
+
 def answer_question(question: str, clarify_ok: bool = True) -> dict:
     """Returns {'chat'} | {'clarify'} | {'query','rows'} | {'error'}."""
+    if SEMANTIC_BACKEND == "metricflow":
+        import mf_backend
+        return mf_backend.answer_question(question, clarify_ok)
     # Deterministic fast-path: top exec questions skip the LLM entirely
     # (sub-second + 100% reproducible).
     fp = fastpath.match(question)

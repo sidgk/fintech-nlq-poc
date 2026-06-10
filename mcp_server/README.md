@@ -67,6 +67,31 @@ data-engineering repo, point MetricFlow at the production warehouse (e.g.
 `dbt-athena`), and run this same `query_metric` handler in the MCP-server repo.
 (See `docs/metricflow/SETUP.md`.)
 
+## Serving the Slack bot via MetricFlow (not Cube)
+The Slack bot can answer **through this MCP server's MetricFlow layer instead of
+Cube** — one env switch, no Cube involved:
+
+```bash
+SEMANTIC_BACKEND=metricflow      # default is "cube"
+```
+
+With it set, `bot/resolver.answer_question()` delegates to `bot/mf_backend.py`,
+which: reads the metric catalog from this server (`list_metrics`), asks the LLM
+for a MetricFlow spec `{metrics, group_by, order_by, limit}` (never SQL), and
+executes it through this server's `query_rows()` — the **same handler** the AI
+client calls. So accounts, payments, and any future domain are served via the MCP
+server / MetricFlow.
+
+End-to-end test (real MCP protocol over stdio, both domains):
+```bash
+DBT_HOST=127.0.0.1 DBT_PORT=55432 venv/bin/python mcp_server/test_e2e.py
+```
+
+**Reconciliation:** the MetricFlow path matches Cube exactly — `block_rate` by
+risk agrees to 4 decimals and the account total (2000) is identical. Ratio metrics
+return a 0–1 fraction in MetricFlow; the bot scales them to the app's 0–100 display
+convention (`block_rate 0.0751 → 7.5%`) to match Cube's `100.0 * num/den`.
+
 ## Accuracy carries over
 Reconciliation + quality tests (dbt), certification (`meta` on metrics), golden
 evals (now run via `mf query`), additivity (`type: ratio` stays ratio-of-sums).

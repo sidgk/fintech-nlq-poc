@@ -76,6 +76,52 @@ def do_query(metrics, group_by="", order_by="", limit=100):
     return _mf(args)
 
 
+def query_rows(metrics, group_by="", order_by="", limit=100):
+    """Same MetricFlow query as do_query, but returns STRUCTURED rows
+    (a list of dicts) via `mf query --csv`. This is the path other services
+    (e.g. the Slack bot) call so they get data, not a pretty table.
+
+    Returns: {"columns": [...], "rows": [ {col: val, ...}, ... ]}  or  {"error": ...}
+    """
+    import csv
+    import tempfile
+
+    fd, path = tempfile.mkstemp(suffix=".csv")
+    os.close(fd)
+    try:
+        args = ["query", "--metrics", metrics, "--csv", path]
+        if group_by:
+            args += ["--group-by", group_by]
+        if order_by:
+            args += ["--order", order_by]
+        args += ["--limit", str(limit)]
+        r = subprocess.run([MF, *args], cwd=DBT_DIR, env=ENV,
+                           capture_output=True, text=True, timeout=120)
+        if r.returncode != 0:
+            return {"error": (r.stderr or r.stdout or "MetricFlow query failed")[:600]}
+        with open(path, newline="") as f:
+            reader = csv.DictReader(f)
+            rows = [dict(row) for row in reader]
+        cols = list(rows[0].keys()) if rows else []
+        # Coerce numeric-looking cells so downstream formatting/sum works.
+        for row in rows:
+            for k, v in row.items():
+                if v in ("", None):
+                    continue
+                try:
+                    row[k] = int(v) if str(v).lstrip("-").isdigit() else float(v)
+                except (TypeError, ValueError):
+                    pass
+        return {"columns": cols, "rows": rows}
+    except Exception as e:
+        return {"error": str(e)}
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
 mcp = FastMCP("datalake-metrics")
 
 
